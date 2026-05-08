@@ -1,11 +1,11 @@
 ---
-description: Draft a commit message from current diff
-agent: docs
+description: Stage and commit changes
+agent: general
 model: opencode-go/qwen3.5-plus
 subtask: true
 ---
 
-Draft a commit message. Do not edit files.
+Stage and commit changes.
 
 Current status:
 
@@ -27,10 +27,10 @@ Staged diff:
 
 !`git diff --cached`
 
-Return:
+Commit message (conventional format preferred):
 
-1. A concise conventional commit subject if appropriate.
-2. A short body explaining why, not just what.
-3. Any test notes to include.
+!`echo "Commit message: " && head -n 1 /dev/stdin`
 
-Do not run `git commit`.
+Stage and commit:
+
+!`git add -A && git commit -m "$ARGUMENTS"`
