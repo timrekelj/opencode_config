@@ -88,7 +88,8 @@
     },
     "external_directory": "ask",
     "webfetch": "ask",
-    "websearch": "ask"
+    "websearch": "ask",
+    "todowrite": "allow"
   },
   "provider": {
     "opencode-go": {
@@ -111,25 +112,46 @@
   },
   "agent": {
     "build": {
-      "model": "opencode-go/minimax-m2.7"
+      "model": "opencode-go/minimax-m2.7",
+      "permission": {
+        "edit": "allow"
+      }
     },
     "quickfix": {
-      "model": "opencode-go/deepseek-v4-flash"
+      "model": "opencode-go/deepseek-v4-flash",
+      "permission": {
+        "edit": "allow"
+      }
     },
     "debug": {
-      "model": "opencode-go/deepseek-v4-pro"
+      "model": "opencode-go/deepseek-v4-pro",
+      "permission": {
+        "edit": "allow"
+      }
     },
     "hard-code": {
-      "model": "opencode-go/kimi-k2.6"
+      "model": "opencode-go/deepseek-v4-pro",
+      "permission": {
+        "edit": "allow"
+      }
     },
     "long-refactor": {
-      "model": "opencode-go/mimo-v2.5-pro"
+      "model": "opencode-go/deepseek-v4-pro",
+      "permission": {
+        "edit": "allow"
+      }
     },
     "test-writer": {
-      "model": "opencode-go/minimax-m2.5"
+      "model": "opencode-go/minimax-m2.7",
+      "permission": {
+        "edit": "allow"
+      }
     },
     "docs": {
-      "model": "opencode-go/qwen3.5-plus"
+      "model": "opencode-go/deepseek-v4-flash",
+      "permission": {
+        "edit": "allow"
+      }
     },
     "review": {
       "model": "openai/gpt-5.5"
