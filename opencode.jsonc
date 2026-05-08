@@ -89,7 +89,8 @@
     "external_directory": "ask",
     "webfetch": "ask",
     "websearch": "ask",
-    "todowrite": "allow"
+    "todowrite": "allow",
+    "skill": "allow"
   },
   "provider": {
     "opencode-go": {
@@ -155,6 +156,18 @@
     },
     "review": {
       "model": "openai/gpt-5.5"
+    },
+    "write-commit": {
+      "description": "Drafts a conventional commit message from the current git diff. Returns a commit subject, body explaining why, and test notes. Does not edit files or run git commit.",
+      "mode": "subagent",
+      "model": "opencode-go/qwen3.5-plus",
+      "permission": {
+        "edit": "deny",
+        "bash": {
+          "git status*": "allow",
+          "git diff*": "allow"
+        }
+      }
     }
   }
 }

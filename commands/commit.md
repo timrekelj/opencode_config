@@ -11,6 +11,8 @@ Current status:
 
 !`git status --short`
 
+If nothing is staged or modified, stop and report that there is nothing to commit.
+
 Diff stat (unstaged):
 
 !`git diff --stat`
@@ -27,10 +29,14 @@ Staged diff:
 
 !`git diff --cached`
 
-Commit message (conventional format preferred):
+Determine the commit message:
+- If $ARGUMENTS is non-empty, use it directly.
+- Otherwise, invoke the `write-commit` subagent via the Task tool to draft a conventional commit message from the diff above. Extract the full message (subject + body) from its response.
 
-!`echo "Commit message: " && head -n 1 /dev/stdin`
+Then stage all changes and commit:
 
-Stage and commit:
+```
+git add -A && git commit -m "<message>"
+```
 
-!`git add -A && git commit -m "$ARGUMENTS"`
+Replace `<message>` with the determined commit message.
