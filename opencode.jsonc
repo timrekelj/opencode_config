@@ -134,7 +134,7 @@
   },
   "agent": {
     "general": {
-      "model": "opencode-go/kimi-k2.7-code",
+      "model": "opencode-go/glm-5.2",
       "mode": "primary",
       "permission": {
         "task": "allow",
@@ -143,7 +143,7 @@
       }
     },
     "plan": {
-      "model": "opencode-go/glm-5.2",
+      "model": "opencode-go/minimax-m3",
       "mode": "primary",
       "permission": {
         "edit": "deny",
