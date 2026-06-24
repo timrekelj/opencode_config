@@ -1,8 +1,8 @@
 
 {
   "$schema": "https://opencode.ai/config.json",
-  "model": "opencode-go/minimax-m2.7",
-  "small_model": "opencode-go/qwen3.5-plus",
+  "model": "opencode-go/deepseek-v4-pro",
+  "small_model": "opencode-go/deepseek-v4-flash",
   "default_agent": "general",
   "share": "disabled",
   "formatter": true,
@@ -134,7 +134,7 @@
   },
   "agent": {
     "general": {
-      "model": "opencode-go/deepseek-v4-pro",
+      "model": "opencode-go/kimi-k2.7-code",
       "mode": "primary",
       "permission": {
         "task": "allow",
@@ -143,7 +143,7 @@
       }
     },
     "plan": {
-      "model": "opencode-go/mimo-v2.5-pro",
+      "model": "opencode-go/glm-5.2",
       "mode": "primary",
       "permission": {
         "edit": "deny",
@@ -153,13 +153,14 @@
       }
     },
     "build": {
-      "model": "opencode-go/mimo-v2.5",
+      "model": "opencode-go/deepseek-v4-flash",
       "mode": "primary",
       "permission": {
         "edit": "allow"
       }
     },
     "review": {
+      "description": "Call when the user asks for code review, PR review, style checks, or wants feedback on code quality, security, or correctness. Read-only; does not edit.",
       "model": "openai/gpt-5.5",
       "mode": "subagent",
       "permission": {
@@ -167,6 +168,7 @@
       }
     },
     "explore": {
+      "description": "Call when the user needs to understand an unfamiliar codebase, find where something lives, search the codebase, or map out project structure before making changes. Use for research-oriented questions.",
       "model": "openai/gpt-5.5",
       "mode": "subagent",
       "permission": {
@@ -176,6 +178,7 @@
       }
     },
     "debug": {
+      "description": "Call when the user reports a bug, error, crash, or unexpected behavior. Use for reproducing issues, reading stack traces, and diagnosing root causes. Read-only; does not fix the code.",
       "model": "openai/gpt-5.5",
       "mode": "subagent",
       "permission": {
@@ -185,6 +188,7 @@
       }
     },
     "refactor": {
+      "description": "Call when the user asks to restructure, rename, extract, or modernize existing code. Use for improving code organization, reducing duplication, and applying design patterns. Does not add features.",
       "model": "openai/gpt-5.5",
       "mode": "subagent",
       "permission": {
@@ -192,6 +196,7 @@
       }
     },
     "test": {
+      "description": "Call when the user asks to write, fix, or analyze tests. Use for unit tests, integration tests, test plans, mocking strategies, and debugging failing test suites.",
       "model": "openai/gpt-5.5",
       "mode": "subagent",
       "permission": {
@@ -199,6 +204,7 @@
       }
     },
     "explain": {
+      "description": "Call when the user asks \"what does this code do?\", \"how does this work?\", or wants a walkthrough of a specific file, function, or algorithm. Read-only; does not modify code.",
       "model": "openai/gpt-5.5",
       "mode": "subagent",
       "permission": {
