@@ -9,8 +9,9 @@
   "snapshot": true,
   "autoupdate": "notify",
   "instructions": [
-    "AGENTS.md",
+    "AGENTS.md"
   ],
+  "plugin": ["@warp-dot-dev/opencode-warp"],
   "compaction": {
     "auto": true,
     "prune": true,
@@ -41,7 +42,6 @@
     ]
   },
   "permission": {
-    "*": "ask",
     "read": {
       "*": "allow",
       ".env": "deny",
@@ -60,39 +60,9 @@
     "glob": "allow",
     "grep": "allow",
     "lsp": "allow",
-    "edit": "ask",
+    "edit": "allow",
     "bash": {
-      "*": "ask",
-      "pwd": "allow",
-      "ls": "allow",
-      "ls *": "allow",
-      "find *": "allow",
-      "rg *": "allow",
-      "echo": "allow",
-      "echo *": "allow",
-      "grep": "allow",
-      "grep *": "allow",
-      "tr": "allow",
-      "tr *": "allow",
-      "sort": "allow",
-      "sort *": "allow",
-      "diff": "allow",
-      "diff *": "allow",
-      "cat": "allow",
-      "cat *": "allow",
-      "sed": "allow",
-      "sed *": "allow",
-      "head": "allow",
-      "head *": "allow",
-      "tail": "allow",
-      "tail *": "allow",
-      "git status*": "allow",
-      "git diff*": "allow",
-      "git log*": "allow",
-      "git show*": "allow",
-      "git branch*": "allow",
-      "git ls-files*": "allow",
-      "git grep*": "allow",
+      "*": "allow",
       "git commit*": "ask",
       "git push*": "deny",
       "git reset*": "deny",
@@ -100,11 +70,38 @@
       "git checkout*": "ask",
       "rm *": "ask",
       "rm -rf *": "deny",
-      "sudo *": "deny"
+      "sudo *": "deny",
+      "supabase db reset*": "ask",
+      "supabase db push*": "ask",
+      "supabase migrations repair*": "ask",
+      "supabase start*": "ask",
+      "supabase stop*": "ask",
+      "docker run*": "ask",
+      "docker exec*": "ask",
+      "docker start*": "ask",
+      "docker stop*": "ask",
+      "docker restart*": "ask",
+      "docker rm*": "ask",
+      "docker rmi*": "ask",
+      "docker system prune*": "ask",
+      "docker container prune*": "ask",
+      "docker image prune*": "ask",
+      "docker volume rm*": "ask",
+      "docker volume prune*": "ask",
+      "docker network rm*": "ask",
+      "docker network prune*": "ask",
+      "docker compose up*": "ask",
+      "docker compose down*": "ask",
+      "docker compose start*": "ask",
+      "docker compose stop*": "ask",
+      "docker compose restart*": "ask",
+      "docker compose run*": "ask",
+      "docker compose exec*": "ask",
+      "docker compose rm*": "ask"
     },
-    "external_directory": "ask",
-    "webfetch": "ask",
-    "websearch": "ask",
+    "external_directory": "allow",
+    "webfetch": "allow",
+    "websearch": "allow",
     "todowrite": "allow",
     "skill": "allow"
   },
@@ -114,12 +111,6 @@
   },
   "provider": {
     "opencode-go": {
-      "options": {
-        "timeout": 600000,
-        "chunkTimeout": 60000
-      }
-    },
-    "zai-coding-plan": {
       "options": {
         "timeout": 600000,
         "chunkTimeout": 60000
@@ -137,29 +128,27 @@
       }
     }
   },
+  "mcp": {
+    "linear": {
+      "type": "remote",
+      "url": "https://mcp.linear.app/mcp",
+      "enabled": true,
+      "oauth": {}
+    }
+  },
+  "enabled_providers": [
+    "openai",
+    "opencode-go"
+  ],
   "agent": {
-    "build": {
-      "model": "openai/gpt-5.6-sol",
-      "mode": "primary",
-      "description": "Default primary agent for development work: writing, editing, and refactoring code across the codebase. Use when the user asks to implement, fix, build, scaffold, or modify code. Has full tool access and can delegate to specialist subagents.",
-      "permission": {
-        "edit": "allow",
-        "task": "allow",
-        "webfetch": "allow",
-        "websearch": "allow",
-        "bash": {
-          "go build*": "allow",
-          "go test*": "allow"
-        }
-      }
-    },
     "plan": {
-      "model": "zai-coding-plan/glm-5.2",
+      "model": "opencode-go/minimax-m3",
       "variant": "high",
       "mode": "primary",
-      "description": "Primary agent for planning and analysis using Z.AI GLM-5.2 with high reasoning effort. Use when the user asks for a plan, design, architecture review, or exploration of approaches before making code changes. Does not edit files.",
+      "description": "Primary agent for planning and analysis using MiniMax M3. Use when the user asks for a plan, design, architecture review, or exploration of approaches before making code changes. Does not edit files.",
       "permission": {
         "edit": "deny",
+        "linear_*": "allow",
         "task": {
           "*": "allow",
           "refactor": "deny",
@@ -171,7 +160,7 @@
       }
     },
     "general": {
-      "model": "opencode-go/deepseek-v4-pro",
+      "model": "opencode-go/minimax-m3",
       "mode": "subagent",
       "description": "General-purpose subagent for researching complex questions and running parallel multi-step units of work. Delegate to this agent when a task benefits from being run in the background or split into independent sub-tasks, and full tool access (including edits) is needed.",
       "permission": {
@@ -182,7 +171,7 @@
     },
     "explore": {
       "description": "Fast, read-only subagent for exploring an unfamiliar codebase and answering research-oriented questions. Use to map project structure, find where something lives, search code for patterns, or locate files before making changes. Does not edit files.",
-      "model": "zai-coding-plan/glm-5.2-highspeed",
+      "model": "opencode-go/deepseek-v4-flash",
       "mode": "subagent",
       "permission": {
         "webfetch": "allow",
@@ -191,8 +180,8 @@
       }
     },
     "review": {
-      "description": "Subagent for code review, PR review, style checks, and feedback on code quality, security, or correctness using OpenAI GPT-5.6 Sol. Call when the user asks for a review, wants feedback on a diff or PR, or uses @review. Read-only; does not edit.",
-      "model": "openai/gpt-5.6-sol",
+      "description": "Subagent for code review, PR review, style checks, and feedback on code quality, security, or correctness using MiniMax M3. Call when the user asks for a review, wants feedback on a diff or PR, or uses @review. Read-only; does not edit.",
+      "model": "opencode-go/minimax-m3",
       "mode": "subagent",
       "permission": {
         "edit": "deny"
@@ -209,24 +198,24 @@
       }
     },
     "refactor": {
-      "description": "Subagent for restructuring, renaming, extracting, and modernizing existing code using Kimi K2.7 Code. Call when the user asks to refactor, reduce duplication, extract a function or module, rename symbols, or apply design patterns. Improves code organization without adding features. Can edit files.",
-      "model": "opencode-go/kimi-k2.7-code",
+      "description": "Subagent for restructuring, renaming, extracting, and modernizing existing code using MiniMax M3. Call when the user asks to refactor, reduce duplication, extract a function or module, rename symbols, or apply design patterns. Improves code organization without adding features. Can edit files.",
+      "model": "opencode-go/minimax-m3",
       "mode": "subagent",
       "permission": {
         "edit": "allow"
       }
     },
     "test": {
-      "description": "Subagent for writing, fixing, and analyzing unit and integration tests using Kimi K2.7 Code. Call when the user asks to write tests, fix a failing test suite, build a test plan, or design mocking strategies. Can edit files.",
-      "model": "opencode-go/kimi-k2.7-code",
+      "description": "Subagent for writing, fixing, and analyzing unit and integration tests using MiniMax M3. Call when the user asks to write tests, fix a failing test suite, build a test plan, or design mocking strategies. Can edit files.",
+      "model": "opencode-go/minimax-m3",
       "mode": "subagent",
       "permission": {
         "edit": "allow"
       }
     },
     "explain": {
-      "description": "Subagent for explaining code, walking through files, functions, and algorithms, and answering 'what does this do?' or 'how does this work?' questions using Z.AI GLM-5.2 Highspeed. Read-only; does not modify code.",
-      "model": "zai-coding-plan/glm-5.2-highspeed",
+      "description": "Subagent for explaining code, walking through files, functions, and algorithms, and answering 'what does this do?' or 'how does this work?' questions using DeepSeek V4 Flash. Read-only; does not modify code.",
+      "model": "opencode-go/deepseek-v4-flash",
       "mode": "subagent",
       "permission": {
         "webfetch": "allow",
@@ -252,8 +241,8 @@
       }
     },
     "scout": {
-      "description": "Subagent for external documentation and dependency research using Z.AI GLM-5.2 Highspeed. Call when the user asks to look up library docs, read an upstream dependency README/source, check API references, or research how a third-party package works. Read-only; does not modify the workspace.",
-      "model": "zai-coding-plan/glm-5.2-highspeed",
+      "description": "Subagent for external documentation and dependency research using DeepSeek V4 Flash. Call when the user asks to look up library docs, read an upstream dependency README/source, check API references, or research how a third-party package works. Read-only; does not modify the workspace.",
+      "model": "opencode-go/deepseek-v4-flash",
       "mode": "subagent",
       "permission": {
         "webfetch": "allow",
