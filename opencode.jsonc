@@ -1,7 +1,7 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "model": "openai/gpt-5.6-sol",
-  "small_model": "opencode-go/deepseek-v4-flash",
+  "model": "mistral/zai-glm-5-2",
+  "small_model": "mistral/zai-glm-5-2",
   "default_agent": "build",
   "share": "disabled",
   "formatter": true,
@@ -110,12 +110,6 @@
     "max_lines": 1000
   },
   "provider": {
-    "opencode-go": {
-      "options": {
-        "timeout": 600000,
-        "chunkTimeout": 60000
-      }
-    },
     "openai": {
       "models": {
         "gpt-5.6-sol": {
@@ -123,6 +117,48 @@
             "reasoningEffort": "high",
             "textVerbosity": "low",
             "reasoningSummary": "auto"
+          }
+        }
+      }
+    },
+    "mistral": {
+      "options": {
+        "timeout": 600000,
+        "chunkTimeout": 60000
+      },
+      "models": {
+        "mistral-medium-2604": {
+          "name": "Mistral Medium 3.5",
+          "tool_call": true,
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"]
+          },
+          "limit": {
+            "context": 256000,
+            "output": 8192
+          },
+          "cost": {
+            "input": 1.25,
+            "output": 6.4
+          }
+        },
+        "zai-glm-5-2": {
+          "id": "zai-glm-5-2",
+          "name": "Z.ai GLM 5.2",
+          "tool_call": true,
+          "modalities": {
+            "input": ["text"],
+            "output": ["text"]
+          },
+          "limit": {
+            "context": 1000000,
+            "output": 128000
+          },
+          "cost": {
+            "input": 1.19,
+            "output": 3.74,
+            "cache_read": 0.119
           }
         }
       }
@@ -138,14 +174,14 @@
   },
   "enabled_providers": [
     "openai",
-    "opencode-go"
+    "mistral"
   ],
   "agent": {
     "plan": {
-      "model": "opencode-go/minimax-m3",
-      "variant": "high",
+      "model": "mistral/zai-glm-5-2",
       "mode": "primary",
-      "description": "Primary agent for planning and analysis using MiniMax M3. Use when the user asks for a plan, design, architecture review, or exploration of approaches before making code changes. Does not edit files.",
+      "color": "primary",
+      "description": "Primary agent for planning and analysis. Use when the user asks for a plan, design, architecture review, or exploration of approaches before making code changes. Does not edit files.",
       "permission": {
         "edit": "deny",
         "linear_*": "allow",
@@ -160,7 +196,7 @@
       }
     },
     "general": {
-      "model": "opencode-go/minimax-m3",
+      "model": "openai/gpt-5.6-luna",
       "mode": "subagent",
       "description": "General-purpose subagent for researching complex questions and running parallel multi-step units of work. Delegate to this agent when a task benefits from being run in the background or split into independent sub-tasks, and full tool access (including edits) is needed.",
       "permission": {
@@ -171,7 +207,7 @@
     },
     "explore": {
       "description": "Fast, read-only subagent for exploring an unfamiliar codebase and answering research-oriented questions. Use to map project structure, find where something lives, search code for patterns, or locate files before making changes. Does not edit files.",
-      "model": "opencode-go/deepseek-v4-flash",
+      "model": "openai/gpt-5.6-luna",
       "mode": "subagent",
       "permission": {
         "webfetch": "allow",
@@ -180,16 +216,16 @@
       }
     },
     "review": {
-      "description": "Subagent for code review, PR review, style checks, and feedback on code quality, security, or correctness using MiniMax M3. Call when the user asks for a review, wants feedback on a diff or PR, or uses @review. Read-only; does not edit.",
-      "model": "opencode-go/minimax-m3",
+      "description": "Subagent for code review, PR review, style checks, and feedback on code quality, security, or correctness. Call when the user asks for a review, wants feedback on a diff or PR, or uses @review. Read-only; does not edit.",
+      "model": "mistral/zai-glm-5-2",
       "mode": "subagent",
       "permission": {
         "edit": "deny"
       }
     },
     "debug": {
-      "description": "Subagent for diagnosing bugs, errors, crashes, and unexpected behavior using OpenAI GPT-5.6 Sol. Call when the user reports a bug, error, crash, stack trace, failing test, or unexpected output. Reproduces issues and reads stack traces to find root causes. Read-only; does not fix code.",
-      "model": "openai/gpt-5.6-sol",
+      "description": "Subagent for diagnosing bugs, errors, crashes, and unexpected behavior. Call when the user reports a bug, error, crash, stack trace, failing test, or unexpected output. Reproduces issues and reads stack traces to find root causes. Read-only; does not fix code.",
+      "model": "mistral/zai-glm-5-2",
       "mode": "subagent",
       "permission": {
         "webfetch": "allow",
@@ -198,24 +234,24 @@
       }
     },
     "refactor": {
-      "description": "Subagent for restructuring, renaming, extracting, and modernizing existing code using MiniMax M3. Call when the user asks to refactor, reduce duplication, extract a function or module, rename symbols, or apply design patterns. Improves code organization without adding features. Can edit files.",
-      "model": "opencode-go/minimax-m3",
+      "description": "Subagent for restructuring, renaming, extracting, and modernizing existing code. Call when the user asks to refactor, reduce duplication, extract a function or module, rename symbols, or apply design patterns. Improves code organization without adding features. Can edit files.",
+      "model": "openai/gpt-5.6-luna",
       "mode": "subagent",
       "permission": {
         "edit": "allow"
       }
     },
     "test": {
-      "description": "Subagent for writing, fixing, and analyzing unit and integration tests using MiniMax M3. Call when the user asks to write tests, fix a failing test suite, build a test plan, or design mocking strategies. Can edit files.",
-      "model": "opencode-go/minimax-m3",
+      "description": "Subagent for writing, fixing, and analyzing unit and integration tests. Call when the user asks to write tests, fix a failing test suite, build a test plan, or design mocking strategies. Can edit files.",
+      "model": "openai/gpt-5.6-luna",
       "mode": "subagent",
       "permission": {
         "edit": "allow"
       }
     },
     "explain": {
-      "description": "Subagent for explaining code, walking through files, functions, and algorithms, and answering 'what does this do?' or 'how does this work?' questions using DeepSeek V4 Flash. Read-only; does not modify code.",
-      "model": "opencode-go/deepseek-v4-flash",
+      "description": "Subagent for explaining code, walking through files, functions, and algorithms, and answering 'what does this do?' or 'how does this work?' questions. Read-only; does not modify code.",
+      "model": "openai/gpt-5.6-luna",
       "mode": "subagent",
       "permission": {
         "webfetch": "allow",
@@ -225,7 +261,7 @@
     },
     "commit": {
       "description": "Subagent for creating git commits. Call when the user asks to commit, stage and commit, or create a git commit. Drafts conventional commit messages, stages unstaged files when needed, and splits changes into logical commits.",
-      "model": "opencode-go/deepseek-v4-flash",
+      "model": "mistral/zai-glm-5-2",
       "mode": "subagent",
       "permission": {
         "edit": "deny",
@@ -241,8 +277,8 @@
       }
     },
     "scout": {
-      "description": "Subagent for external documentation and dependency research using DeepSeek V4 Flash. Call when the user asks to look up library docs, read an upstream dependency README/source, check API references, or research how a third-party package works. Read-only; does not modify the workspace.",
-      "model": "opencode-go/deepseek-v4-flash",
+      "description": "Subagent for external documentation and dependency research. Call when the user asks to look up library docs, read an upstream dependency README/source, check API references, or research how a third-party package works. Read-only; does not modify the workspace.",
+      "model": "openai/gpt-5.6-luna",
       "mode": "subagent",
       "permission": {
         "webfetch": "allow",
@@ -252,8 +288,8 @@
       }
     },
     "security": {
-      "description": "Subagent for performing security audits and identifying vulnerabilities using OpenAI GPT-5.6 Sol. Call when the user asks for a security review, to find vulnerabilities, check input validation, authentication/authorization flaws, data exposure, or dependency CVEs. Read-only; does not edit.",
-      "model": "openai/gpt-5.6-sol",
+      "description": "Subagent for performing security audits and identifying vulnerabilities. Call when the user asks for a security review, to find vulnerabilities, check input validation, authentication/authorization flaws, data exposure, or dependency CVEs. Read-only; does not edit.",
+      "model": "mistral/zai-glm-5-2",
       "mode": "subagent",
       "permission": {
         "webfetch": "allow",
