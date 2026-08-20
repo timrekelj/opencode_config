@@ -3,7 +3,7 @@ description: Call when the user asks to commit changes, stage and commit,
   or create a git commit. Drafts conventional commit messages, stages unstaged
   files when needed, and can split changes into multiple logical commits.
 mode: subagent
-model: mistral/zai-glm-5-2
+model: opencode-go/deepseek-v4-flash
 permission:
   edit: deny
   bash:
