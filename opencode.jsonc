@@ -1,8 +1,8 @@
 {
   "$schema": "https://opencode.ai/config.json",
   "model": "openai/gpt-5.6-sol",
-  "small_model": "opencode-go/deepseek-v4-flash",
-  "default_agent": "build",
+  "small_model": "opencode-go/glm-5.3-flash",
+  "default_agent": "plan",
   "share": "disabled",
   "formatter": true,
   "lsp": true,
@@ -11,7 +11,6 @@
   "instructions": [
     "AGENTS.md"
   ],
-  "plugin": ["@warp-dot-dev/opencode-warp"],
   "compaction": {
     "auto": true,
     "prune": true,
@@ -105,10 +104,6 @@
     "todowrite": "allow",
     "skill": "allow"
   },
-  "tool_output": {
-    "max_bytes": 30000,
-    "max_lines": 1000
-  },
   "provider": {
     "opencode-go": {
       "options": {
@@ -126,48 +121,6 @@
           }
         }
       }
-    },
-    "mistral": {
-      "options": {
-        "timeout": 600000,
-        "chunkTimeout": 60000
-      },
-      "models": {
-        "mistral-medium-2604": {
-          "name": "Mistral Medium 3.5",
-          "tool_call": true,
-          "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"]
-          },
-          "limit": {
-            "context": 256000,
-            "output": 8192
-          },
-          "cost": {
-            "input": 1.25,
-            "output": 6.4
-          }
-        },
-        "zai-glm-5-2": {
-          "id": "zai-glm-5-2",
-          "name": "Z.ai GLM 5.2",
-          "tool_call": true,
-          "modalities": {
-            "input": ["text"],
-            "output": ["text"]
-          },
-          "limit": {
-            "context": 1000000,
-            "output": 128000
-          },
-          "cost": {
-            "input": 1.19,
-            "output": 3.74,
-            "cache_read": 0.119
-          }
-        }
-      }
     }
   },
   "mcp": {
@@ -180,130 +133,20 @@
   },
   "enabled_providers": [
     "openai",
-    "opencode-go",
-    "mistral"
+    "opencode-go"
   ],
   "agent": {
     "plan": {
-      "model": "opencode-go/mimo-v2.5-pro",
-      "variant": "high",
-      "mode": "primary",
-      "color": "primary",
-      "description": "Primary agent for planning and analysis. Use when the user asks for a plan, design, architecture review, or exploration of approaches before making code changes. Does not edit files.",
-      "permission": {
-        "edit": "deny",
-        "linear_*": "allow",
-        "task": {
-          "*": "allow",
-          "refactor": "deny",
-          "test": "deny",
-          "commit": "deny"
-        },
-        "webfetch": "allow",
-        "websearch": "allow"
-      }
+      "model": "opencode-go/glm-5.3-flash"
     },
     "general": {
-      "model": "opencode-go/mimo-v2.5-pro",
-      "mode": "subagent",
-      "description": "General-purpose subagent for researching complex questions and running parallel multi-step units of work. Delegate to this agent when a task benefits from being run in the background or split into independent sub-tasks, and full tool access (including edits) is needed.",
-      "permission": {
-        "task": "allow",
-        "webfetch": "allow",
-        "websearch": "allow"
-      }
+      "model": "opencode-go/glm-5.3-flash"
     },
     "explore": {
-      "description": "Fast, read-only subagent for exploring an unfamiliar codebase and answering research-oriented questions. Use to map project structure, find where something lives, search code for patterns, or locate files before making changes. Does not edit files.",
-      "model": "opencode-go/deepseek-v4-flash",
-      "mode": "subagent",
-      "permission": {
-        "webfetch": "allow",
-        "websearch": "allow",
-        "edit": "deny"
-      }
+      "model": "opencode-go/glm-5.3-flash"
     },
-    "review": {
-      "description": "Subagent for code review, PR review, style checks, and feedback on code quality, security, or correctness. Call when the user asks for a review, wants feedback on a diff or PR, or uses @review. Read-only; does not edit.",
-      "model": "opencode-go/mimo-v2.5-pro",
-      "mode": "subagent",
-      "permission": {
-        "edit": "deny"
-      }
-    },
-    "debug": {
-      "description": "Subagent for diagnosing bugs, errors, crashes, and unexpected behavior. Call when the user reports a bug, error, crash, stack trace, failing test, or unexpected output. Reproduces issues and reads stack traces to find root causes. Read-only; does not fix code.",
-      "model": "openai/gpt-5.6-sol",
-      "mode": "subagent",
-      "permission": {
-        "webfetch": "allow",
-        "websearch": "allow",
-        "edit": "deny"
-      }
-    },
-    "refactor": {
-      "description": "Subagent for restructuring, renaming, extracting, and modernizing existing code. Call when the user asks to refactor, reduce duplication, extract a function or module, rename symbols, or apply design patterns. Improves code organization without adding features. Can edit files.",
-      "model": "opencode-go/mimo-v2.5-pro",
-      "mode": "subagent",
-      "permission": {
-        "edit": "allow"
-      }
-    },
-    "test": {
-      "description": "Subagent for writing, fixing, and analyzing unit and integration tests. Call when the user asks to write tests, fix a failing test suite, build a test plan, or design mocking strategies. Can edit files.",
-      "model": "opencode-go/mimo-v2.5-pro",
-      "mode": "subagent",
-      "permission": {
-        "edit": "allow"
-      }
-    },
-    "explain": {
-      "description": "Subagent for explaining code, walking through files, functions, and algorithms, and answering 'what does this do?' or 'how does this work?' questions. Read-only; does not modify code.",
-      "model": "opencode-go/deepseek-v4-flash",
-      "mode": "subagent",
-      "permission": {
-        "webfetch": "allow",
-        "websearch": "allow",
-        "edit": "deny"
-      }
-    },
-    "commit": {
-      "description": "Subagent for creating git commits. Call when the user asks to commit, stage and commit, or create a git commit. Drafts conventional commit messages, stages unstaged files when needed, and splits changes into logical commits.",
-      "model": "opencode-go/deepseek-v4-flash",
-      "mode": "subagent",
-      "permission": {
-        "edit": "deny",
-        "bash": {
-          "git status*": "allow",
-          "git diff*": "allow",
-          "git log*": "allow",
-          "git add*": "allow",
-          "git restore*": "allow",
-          "git reset*": "allow",
-          "git commit*": "allow"
-        }
-      }
-    },
-    "scout": {
-      "description": "Subagent for external documentation and dependency research. Call when the user asks to look up library docs, read an upstream dependency README/source, check API references, or research how a third-party package works. Read-only; does not modify the workspace.",
-      "model": "opencode-go/deepseek-v4-flash",
-      "mode": "subagent",
-      "permission": {
-        "webfetch": "allow",
-        "websearch": "allow",
-        "external_directory": "allow",
-        "edit": "deny"
-      }
-    },
-    "security": {
-      "description": "Subagent for performing security audits and identifying vulnerabilities. Call when the user asks for a security review, to find vulnerabilities, check input validation, authentication/authorization flaws, data exposure, or dependency CVEs. Read-only; does not edit.",
-      "model": "openai/gpt-5.6-sol",
-      "mode": "subagent",
-      "permission": {
-        "webfetch": "allow",
-        "websearch": "allow",
-        "edit": "deny"
-      }
+    "title": {
+      "prompt": "Generate a short session title from this conversation. Use at most 3-4 words, no prefix, no quotes, and no punctuation. Output only the title text."
     }
   }
 }
