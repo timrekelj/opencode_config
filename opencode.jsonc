@@ -124,14 +124,6 @@
       }
     }
   },
-  "mcp": {
-    "linear": {
-      "type": "remote",
-      "url": "https://mcp.linear.app/mcp",
-      "enabled": true,
-      "oauth": {}
-    }
-  },
   "enabled_providers": [
     "openai",
     "opencode-go"
