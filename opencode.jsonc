@@ -1,7 +1,8 @@
 {
   "$schema": "https://opencode.ai/config.json",
+  "plugins": ["./integrations/ponytail"],
   "model": "openai/gpt-6-astra",
-  "small_model": "opencode-go/mimo-v2.6-pro",
+  "small_model": "opencode-go/deepseek-v4.1-flash",
   "default_agent": "plan",
   "share": "disabled",
   "formatter": true,
@@ -133,16 +134,13 @@
        "model": "openai/gpt-6-astra"
     },
     "plan": {
-      "model": "opencode-go/mimo-v2.6-pro"
+      "model": "opencode-go/space-bunny-free"
     },
     "general": {
-      "model": "opencode-go/mimo-v2.6-pro"
+      "model": "opencode-go/deepseek-v4.1-flash"
     },
     "explore": {
-      "model": "opencode-go/mimo-v2.6-pro"
-    },
-    "title": {
-      "prompt": "Generate a short session title from this conversation. Use at most 3-4 words, no prefix, no quotes, and no punctuation. Output only the title text."
+      "model": "opencode-go/deepseek-v4.1-flash"
     }
   }
 }

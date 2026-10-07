@@ -3,3 +3,6 @@ package.json
 package-lock.json
 bun.lock
 service.json
+/.ponytail-active
+!/integrations/ponytail/package.json
+!/integrations/ponytail/package-lock.json
