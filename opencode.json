@@ -1,0 +1,32 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugins": [
+    "opencode-claude-auth@latest",
+    "/Users/timrekelj/.config/opencode/plugins/pr-review",
+    "/Users/timrekelj/.config/opencode/plugins/usage-view"
+  ],
+  "mcp": {
+    "servers": {
+      "linear": {
+        "type": "remote",
+        "url": "https://mcp.linear.app/mcp"
+      },
+      "sentry": {
+        "type": "remote",
+        "url": "https://mcp.sentry.dev/mcp"
+      },
+      "figma": {
+        "type": "remote",
+        "url": "https://mcp.figma.com/mcp"
+      },
+      "chrome-devtools": {
+        "type": "local",
+        "command": [
+          "npx",
+          "-y",
+          "chrome-devtools-mcp@latest"
+        ]
+      }
+    }
+  }
+}
