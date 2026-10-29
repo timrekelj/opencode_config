@@ -9,12 +9,13 @@ import {
   type PanelTab,
   type SessionRef,
 } from "@opencode/plugin/gui"
-import { onCleanup, Show } from "solid-js"
+import { createSignal, onCleanup, Show } from "solid-js"
 import { createStore } from "solid-js/store"
-import type { CurrentPr, DraftComment } from "./types"
-import { makeApi } from "./gui/api"
+import type { CurrentPr, DraftComment, RepoStatus } from "./types"
+import { makeApi, makeGitApi } from "./gui/api"
 import { showErrorToast } from "./gui/errors"
-import { LIST_TAB, prKey, prTabId, prTabNumber, type App } from "./gui/app"
+import { BRANCHES_TAB, LIST_TAB, prKey, prTabId, prTabNumber, type App } from "./gui/app"
+import { BranchesView, checkoutFlow, newBranchFlow } from "./gui/branches"
 import { DetailView } from "./gui/detail"
 import { ListView } from "./gui/list"
 import { checkIcon, checkLabel } from "./gui/util"
@@ -26,25 +27,39 @@ export default Plugin.define({
   i18n: {
     en: {
       "panel.title": "Pull requests",
+      "panel.branches": "Branches",
       "command.open": "Open pull requests",
       "command.pick": "Open pull request…",
       "command.current": "Open pull request for current branch",
-      "command.group": "Pull requests",
+      "command.branches": "Open branches",
+      "command.checkout": "Checkout branch…",
+      "command.newBranch": "New branch…",
+      "command.group": "GitHub",
       "menu.open": "Pull requests",
+      "menu.branches": "Branches",
       "pill.title": "Pull request for this branch",
+      "pill.branch": "Current branch",
     },
   },
   setup(ctx) {
     const api = makeApi(ctx)
+    const git = makeGitApi(ctx)
     const [titles, setTitles] = createStore<Record<string, string>>({})
     const [drafts, mutateDrafts] = ctx.storage.memory("drafts", { initial: {} as Record<string, DraftComment[]> })
     const [current, setCurrent] = createStore<Record<string, CurrentPr | null>>({})
+    const [branch, setBranch] = createStore<Record<string, RepoStatus | null>>({})
+    const [branchTick, setBranchTick] = createSignal(0)
 
     const listKey = `${ctx.id}:${LIST_TAB}`
+    const branchesKey = `${ctx.id}:${BRANCHES_TAB}`
+
+    const optionLimit = Number(ctx.options.limit)
 
     const app: App = {
       ctx,
       api,
+      git,
+      graphLimit: Number.isFinite(optionLimit) && optionLimit > 0 ? optionLimit : 300,
       get drafts() {
         return drafts
       },
@@ -55,7 +70,10 @@ export default Plugin.define({
       titles,
       setTitle: (key, title) => setTitles(key, title),
       openList: (session) => ctx.layout.open(listKey, session, { tab: "select" }),
+      openBranches: (session) => ctx.layout.open(branchesKey, session, { tab: "select" }),
       openPr: (session, number) => ctx.layout.open(`${ctx.id}:${prTabId(number)}`, session, { tab: "select" }),
+      branchTick,
+      bumpBranch: () => setBranchTick((v) => v + 1),
     }
 
     ctx.add(Style, css)
@@ -68,16 +86,30 @@ export default Plugin.define({
       if (existing) return existing
       const number = prTabNumber(id)
       const tab: PanelTab =
-        number === undefined
+        id === BRANCHES_TAB
           ? {
               id,
               get title() {
-                return ctx.t("panel.title")
+                return ctx.t("panel.branches")
               },
               closable: "compact",
-              fallback: true,
+              label: () => (
+                <span class="prr-tab-label">
+                  <ctx.ui.Icon name="branch" size="small" />
+                  <span>{ctx.t("panel.branches")}</span>
+                </span>
+              ),
             }
-          : {
+          : number === undefined
+            ? {
+                id,
+                get title() {
+                  return ctx.t("panel.title")
+                },
+                closable: "compact",
+                fallback: true,
+              }
+            : {
               id,
               title: `#${number}`,
               closable: "hover",
@@ -96,7 +128,7 @@ export default Plugin.define({
     }
 
     ctx.add(Panel, {
-      id: "prs",
+      id: "github",
       region: "side",
       wide: true,
       mobile: {
@@ -107,12 +139,17 @@ export default Plugin.define({
         kind: "menu",
         icon: "github",
       },
-      list: (input) => input.open.filter((id) => id === LIST_TAB || prTabNumber(id) !== undefined).map(tabFor),
+      list: (input) =>
+        input.open.filter((id) => id === LIST_TAB || id === BRANCHES_TAB || prTabNumber(id) !== undefined).map(tabFor),
       render: (props) => (
         <Show
           when={prTabNumber(props.tab.id)}
           keyed
-          fallback={<ListView app={app} session={props.session} />}
+          fallback={
+            <Show when={props.tab.id === BRANCHES_TAB} fallback={<ListView app={app} session={props.session} />}>
+              <BranchesView app={app} session={props.session} />
+            </Show>
+          }
         >
           {(number) => <DetailView app={app} session={props.session} screen={props.screen} number={number} />}
         </Show>
@@ -133,6 +170,25 @@ export default Plugin.define({
           run: () => {
             const s = ctx.sessions.current()
             if (s) app.openList(s)
+          },
+        }
+      },
+    )
+
+    ctx.add(
+      MenuItem,
+      (): MenuItem => {
+        const session = ctx.sessions.current()
+        return {
+          menu: "session.panel",
+          id: "branches",
+          title: ctx.t("menu.branches"),
+          icon: "branch",
+          keybind: `${ctx.id}.branches`,
+          opened: !!session && ctx.layout.state(branchesKey, session) !== "closed",
+          run: () => {
+            const s = ctx.sessions.current()
+            if (s) app.openBranches(s)
           },
         }
       },
@@ -209,7 +265,52 @@ export default Plugin.define({
       },
     )
 
-    // --- composer pill: PR for the session's current branch ---------------------------------------------------------
+    ctx.add(
+      Command,
+      (): Command => ({
+        id: "branches",
+        title: ctx.t("command.branches"),
+        group: ctx.t("command.group"),
+        keywords: "git branch graph history commits",
+        enabled: !!ctx.sessions.current(),
+        run: () => {
+          const session = ctx.sessions.current()
+          if (session) app.openBranches(session)
+        },
+      }),
+    )
+
+    ctx.add(
+      Command,
+      (): Command => ({
+        id: "checkout",
+        title: ctx.t("command.checkout"),
+        group: ctx.t("command.group"),
+        keywords: "git branch switch checkout",
+        enabled: !!ctx.sessions.current(),
+        run: () => {
+          const session = ctx.sessions.current()
+          if (session) void checkoutFlow(app, session)
+        },
+      }),
+    )
+
+    ctx.add(
+      Command,
+      (): Command => ({
+        id: "newBranch",
+        title: ctx.t("command.newBranch"),
+        group: ctx.t("command.group"),
+        keywords: "git branch create new",
+        enabled: !!ctx.sessions.current(),
+        run: () => {
+          const session = ctx.sessions.current()
+          if (session) void newBranchFlow(app, session)
+        },
+      }),
+    )
+
+    // --- composer pills: PR for the session's current branch, and the branch itself --------------------------------
 
     const refreshCurrent = (session: SessionRef & { directory: string }) =>
       api.current(session.directory).then(
@@ -217,19 +318,64 @@ export default Plugin.define({
         () => setCurrent(session.directory, null),
       )
 
+    const refreshBranch = (session: SessionRef & { directory: string }) =>
+      git.repo(session.directory).then(
+        (status) => setBranch(session.directory, status),
+        () => setBranch(session.directory, null),
+      )
+
     createKeyed(
-      () => ctx.sessions.current()?.directory,
+      () => `${ctx.sessions.current()?.directory}\n${branchTick()}`,
       () => {
         const session = ctx.sessions.current()
         if (!session) return
         void refreshCurrent(session)
+        void refreshBranch(session)
         const timer = setInterval(() => {
           const s = ctx.sessions.current()
-          if (s) void refreshCurrent(s)
+          if (s) {
+            void refreshCurrent(s)
+            void refreshBranch(s)
+          }
         }, CURRENT_REFRESH_MS)
         onCleanup(() => clearInterval(timer))
       },
     )
+
+    ctx.add(ComposerPill, {
+      id: "branch",
+      order: 5,
+      show: (input) => {
+        const status = branch[input.session.directory]
+        if (!status) return undefined
+        return {
+          icon: "branch",
+          label: status.detached ? `${status.hash} (detached)` : status.branch,
+          title: `${ctx.t("pill.branch")}: ${status.detached ? `detached at ${status.hash}` : status.branch}`,
+          rows: [
+            {
+              id: "open",
+              label: "Open branches",
+              icon: "branch",
+              detail: status.detached ? "detached HEAD" : status.branch,
+              run: () => app.openBranches(input.session),
+            },
+            {
+              id: "checkout",
+              label: "Checkout branch…",
+              icon: "branch-out",
+              run: () => void checkoutFlow(app, input.session),
+            },
+            {
+              id: "new",
+              label: "New branch…",
+              icon: "plus",
+              run: () => void newBranchFlow(app, input.session),
+            },
+          ],
+        }
+      },
+    })
 
     ctx.add(ComposerPill, {
       id: "current",

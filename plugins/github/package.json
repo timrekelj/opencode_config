@@ -1,5 +1,5 @@
 {
-  "name": "pr-review",
+  "name": "github",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -11,7 +11,8 @@
   "scripts": {
     "build": "vite build",
     "dev": "vite build --watch",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "bun run scripts/test-git.ts"
   },
   "dependencies": {
     "@opencode/plugin": "2.2.0"

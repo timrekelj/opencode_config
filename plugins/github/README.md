@@ -1,12 +1,16 @@
-# pr-review
+# github
 
-Review GitHub pull requests in the OpenCode Desktop side panel, modeled on the T3 Code PR panel.
+GitHub pull requests and local git branches in the OpenCode Desktop side panel, modeled on the T3 Code PR panel.
 
 Uses the GitHub CLI on the machine running the OpenCode server, so `gh auth login` must be done.
 
 ## Features
 
-- **Pull requests tab**: the open PRs of the session's repository, grouped into *Needs your review*, *Your pull
+- **Branches tab**: the session repository's local and remote branches (upstream, ahead/behind, checked out
+  elsewhere in a worktree), with checkout, create, rename, delete, merge-into-current, fetch / pull / push, and a
+  commit graph (Local / Current / All) drawn like the screenshot's Git panel. Commands: *Open branches*,
+  *Checkout branch…*, *New branch…*. A composer pill shows the current branch.
+- **Pull requests tab**:  the open PRs of the session's repository, grouped into *Needs your review*, *Your pull
   requests* and *Everything else*. Search by title, `#number`, branch, author or label, and filter by
   Open / Closed / Merged / All. Cmd-click a row to open it on GitHub.
 - **One tab per PR** (`#123 Title`) with three views:
@@ -37,5 +41,5 @@ The server part (`src/index.ts`) runs from source. Restart the service after cha
 Options (in `opencode.json`):
 
 ```jsonc
-{ "plugins": [{ "package": "/Users/timrekelj/.config/opencode/plugins/pr-review", "options": { "gh": "/opt/homebrew/bin/gh" } }] }
+{ "plugins": [{ "package": "/Users/timrekelj/.config/opencode/plugins/github", "options": { "gh": "/opt/homebrew/bin/gh", "limit": 300 } }] }
 ```
