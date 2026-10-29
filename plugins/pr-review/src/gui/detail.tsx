@@ -48,13 +48,7 @@ export function DetailView(props: { app: App; session: MountedSession; screen: S
     ctx.layout.draft({
       server: props.session.server.id,
       directory: dir(),
-      prompt: [
-        `Review pull request #${pr.number} "${pr.title}" (${pr.url}).`,
-        "",
-        `Use \`gh pr view ${pr.number}\` and \`gh pr diff ${pr.number}\` to read the description and the full diff, and read surrounding code in the repository where needed.`,
-        "Look for bugs, regressions, security problems, missing tests and confusing code. Do not modify files and do not post anything to GitHub.",
-        "Report findings grouped by severity, each with a file:line reference and a concrete suggestion.",
-      ].join("\n"),
+      prompt: `/review ${pr.number}`,
     })
   }
 
