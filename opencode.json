@@ -90,6 +90,9 @@
     { "action": "shell", "resource": "gh pr merge *", "effect": "ask" }
   ],
   "formatter": true,
+  "worktree": {
+    "directory": "../worktrees"
+  },
   "compaction": {
     "auto": true,
     "keep": {
