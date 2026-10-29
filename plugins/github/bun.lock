@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "pr-review",
+      "name": "github",
       "dependencies": {
         "@opencode/plugin": "2.2.0",
       },

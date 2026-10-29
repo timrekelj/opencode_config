@@ -4,6 +4,8 @@ import { errorMessage } from "./api"
 export type ErrorKind =
   | "unavailable"
   | "gh_missing"
+  | "git_missing"
+  | "git_failed"
   | "gh_auth"
   | "not_git"
   | "no_remote"
@@ -40,10 +42,37 @@ export function describeError(error: unknown, directory?: string): FriendlyError
       ...base,
       kind: "unavailable",
       icon: "extensions",
-      title: "The PR plugin's server part isn't running",
+      title: "The GitHub plugin's server part isn't running",
       hint: "The desktop panel loaded, but the OpenCode service hasn't loaded the plugin's server code yet. Restart the service, then retry.",
       command: "opencode service restart",
     }
+  if (type === "git_failed") {
+    if (/git was not found|command not found: git/i.test(raw))
+      return {
+        ...base,
+        kind: "git_missing",
+        icon: "console",
+        title: "git isn't installed",
+        hint: "This panel runs git on the machine running OpenCode. Install git, then retry.",
+        command: "brew install git",
+      }
+    if (/not a git repository/i.test(raw))
+      return {
+        ...base,
+        kind: "not_git",
+        icon: "folder",
+        title: "This folder isn't a git repository",
+        hint: `Branches and history come from the session's folder${where}. Open a session inside a git repository.`,
+        retry: false,
+      }
+    return {
+      ...base,
+      kind: "git_failed",
+      icon: "circle-exclamation",
+      title: "Git command failed",
+      hint: "The details below show git's exact output.",
+    }
+  }
   if (/gh\) was not found|command not found: gh|ENOENT/i.test(raw))
     return {
       ...base,
@@ -81,6 +110,16 @@ export function describeError(error: unknown, directory?: string): FriendlyError
       hint: `Pull requests come from the session's folder${where}. Open a session inside a GitHub repository to review its pull requests.`,
       retry: false,
     }
+  if (type === "gh_failed" && /not a git repository/i.test(raw)) {
+    return {
+      ...base,
+      kind: "not_git",
+      icon: "folder",
+      title: "This folder isn't a git repository",
+      hint: `Branches and pull requests come from the session's folder${where}. Open a session inside a git repository.`,
+      retry: false,
+    }
+  }
   if (/no git remotes|none of the git remotes|could not find any remote|no remote/i.test(raw))
     return {
       ...base,
