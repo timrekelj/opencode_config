@@ -14,7 +14,7 @@ because `cost` is then 0 everywhere and the model catalog's prices are zeroed.
 - **Scope**: this project (the current session's project) or all projects.
 - **Summary**: estimated API cost, actual billed cost, total tokens (input / output+reasoning / cache read / cache
   write), sessions / prompts / steps / subagents, active days and streak.
-- **Over time** bar chart, by cost or tokens, with a tooltip on each bar.
+- **Over time** line chart, by cost or tokens, with a tooltip on each point.
 - **By model**: steps, tokens, estimated cost and share.
 - **Tools**: calls, failure rate and median (p50) duration.
 - **Top sessions** active in the range, sorted by tokens. Click one to open it. These are lifetime totals for each

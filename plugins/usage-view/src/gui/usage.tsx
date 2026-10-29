@@ -343,6 +343,22 @@ function CostTypes(props: { parts: CostParts; total: number }) {
   )
 }
 
+/** Catmull-Rom spline through the points, as an SVG path in a 0–100 viewBox. */
+function smoothPath(pts: { x: number; y: number }[]): string {
+  if (pts.length === 0) return ""
+  const f = (n: number) => n.toFixed(2)
+  if (pts.length === 1) return `M ${f(pts[0]!.x)} ${f(pts[0]!.y)}`
+  let d = `M ${f(pts[0]!.x)} ${f(pts[0]!.y)}`
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[i - 1] ?? pts[i]!
+    const p1 = pts[i]!
+    const p2 = pts[i + 1]!
+    const p3 = pts[i + 2] ?? p2
+    d += ` C ${f(p1.x + (p2.x - p0.x) / 6)} ${f(p1.y + (p2.y - p0.y) / 6)}, ${f(p2.x - (p3.x - p1.x) / 6)} ${f(p2.y - (p3.y - p1.y) / 6)}, ${f(p2.x)} ${f(p2.y)}`
+  }
+  return d
+}
+
 function Chart(props: {
   ui: Context["ui"]
   data: UsageData
@@ -350,20 +366,57 @@ function Chart(props: {
   metric: "cost" | "tokens"
   setMetric: (metric: "cost" | "tokens") => void
 }) {
-  const bars = createMemo(() =>
-    props.data.buckets.map((bucket: Bucket) => {
+  const entries = createMemo(() =>
+    props.data.buckets.map((bucket: Bucket, index, all) => {
       const stats = bucket.stats
       const cost = stats ? costOf(stats.models, props.prices) : { est: 0, parts: emptyParts(), savings: 0, partial: false, unknown: false }
       const size = stats ? totalTokens(stats.tokens) : 0
-      return { bucket, cost, tokens: size, steps: stats?.steps ?? 0, value: props.metric === "cost" ? cost.est : size }
+      return {
+        bucket,
+        cost,
+        tokens: size,
+        steps: stats?.steps ?? 0,
+        value: props.metric === "cost" ? cost.est : size,
+        i: index,
+        x: all.length > 1 ? (index / (all.length - 1)) * 100 : 50,
+      }
     }),
   )
-  const max = createMemo(() => Math.max(0, ...bars().map((b) => b.value)))
-  const every = createMemo(() => {
-    const n = bars().length
-    return n <= 8 ? 1 : n <= 14 ? 2 : n <= 24 ? 6 : 5
+  const max = createMemo(() => Math.max(0, ...entries().map((b) => b.value)))
+  /** Y axis in round steps that cover the max, e.g. $0/$50/$100/$150. */
+  const axis = createMemo(() => {
+    const m = max()
+    if (m <= 0) return { top: 0, ticks: [{ value: 0, y: 100 }] }
+    const count = 3
+    const raw = m / count
+    const mag = 10 ** Math.floor(Math.log10(raw))
+    const norm = raw / mag
+    const tickStep = (norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10) * mag
+    const top = tickStep * count
+    return { top, ticks: Array.from({ length: count + 1 }, (_, i) => ({ value: top - i * tickStep, y: (i / count) * 100 })) }
   })
+  /** Buckets with stats, with y as a percentage of the plot height (0 = top). Future buckets are left out. */
+  const points = createMemo(() => {
+    const top = axis().top
+    return entries()
+      .filter((b) => b.bucket.stats)
+      .map((b) => ({ ...b, y: top > 0 && b.value > 0 ? 100 - (b.value / top) * 100 : 100 }))
+  })
+  const labelStep = createMemo(() => Math.max(1, Math.ceil(entries().length / 3)))
   const peak = () => (props.metric === "cost" ? dollars(max()) : tokens(max()))
+  const grid = createMemo(() =>
+    axis().ticks.map((t) => ({
+      y: t.y,
+      label: t.value === 0 ? "0" : props.metric === "cost" ? dollars(t.value) : tokens(t.value),
+    })),
+  )
+  const line = createMemo(() => smoothPath(points().map((p) => ({ x: p.x, y: p.y }))))
+  const area = createMemo(() => {
+    const pts = points()
+    if (pts.length === 0) return ""
+    return `${line()} L ${pts[pts.length - 1]!.x.toFixed(2)} 100 L ${pts[0]!.x.toFixed(2)} 100 Z`
+  })
+  const hitWidth = () => (entries().length > 0 ? 100 / entries().length : 100)
 
   return (
     <section class="uv-section">
@@ -381,31 +434,79 @@ function Chart(props: {
           onChange={props.setMetric}
         />
       </div>
-      <div class="uv-chart" style={{ "--uv-bars": String(bars().length) }}>
-        <For each={bars()}>
-          {(bar, index) => (
-            <props.ui.Tooltip
-              value={
-                <span class="uv-tip">
-                  <strong>{bar.bucket.label}</strong>
-                  <span>
-                    {costLabel(bar.cost)} est. · {tokens(bar.tokens)} tokens · {exact(bar.steps)} steps
-                  </span>
-                </span>
-              }
-            >
-              <div class="uv-bar-col" aria-label={`${bar.bucket.label}: ${costLabel(bar.cost)}, ${tokens(bar.tokens)} tokens`}>
-                <div class="uv-bar-track">
+      <div class="uv-chart">
+        <div class="uv-ylabels">
+          <For each={grid()}>
+            {(g) => (
+              <span class="uv-ylabel" style={{ top: `${g.y}%` }}>
+                {g.label}
+              </span>
+            )}
+          </For>
+        </div>
+        <div class="uv-plot">
+          <svg class="uv-svg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+            <defs>
+              <linearGradient id="uv-line-fill" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" class="uv-stop-top" />
+                <stop offset="100%" class="uv-stop-bottom" />
+              </linearGradient>
+            </defs>
+            <For each={grid()}>
+              {(g) => <line class="uv-gridline" x1="0" x2="100" y1={g.y} y2={g.y} vector-effect="non-scaling-stroke" />}
+            </For>
+            <path class="uv-area" d={area()} />
+            <path class="uv-line" d={line()} vector-effect="non-scaling-stroke" />
+          </svg>
+          <div class="uv-hits" role="list">
+            <For each={points()}>
+              {(p) => (
+                <props.ui.Tooltip
+                  value={
+                    <span class="uv-tip">
+                      <strong>{p.bucket.label}</strong>
+                      <span>
+                        {costLabel(p.cost)} est. · {tokens(p.tokens)} tokens · {exact(p.steps)} steps
+                      </span>
+                    </span>
+                  }
+                >
                   <div
-                    classList={{ "uv-bar": true, "uv-bar-empty": bar.value <= 0, "uv-bar-future": !bar.bucket.stats }}
-                    style={{ height: max() > 0 && bar.value > 0 ? `max(2px, ${(bar.value / max()) * 100}%)` : "0" }}
-                  />
-                </div>
-                <div class="uv-bar-label">{index() % every() === 0 ? bar.bucket.short : ""}</div>
-              </div>
-            </props.ui.Tooltip>
-          )}
-        </For>
+                    class="uv-hit"
+                    role="listitem"
+                    style={{ left: `${(p.i / entries().length) * 100}%`, width: `${hitWidth()}%` }}
+                    aria-label={`${p.bucket.label}: ${costLabel(p.cost)}, ${tokens(p.tokens)} tokens`}
+                  >
+                    <span
+                      class="uv-dot"
+                      style={{ left: `${((p.x - (p.i / entries().length) * 100) / hitWidth()) * 100}%`, top: `${p.y}%` }}
+                    />
+                  </div>
+                </props.ui.Tooltip>
+              )}
+            </For>
+          </div>
+        </div>
+        <div class="uv-xlabels">
+          <For each={entries()}>
+            {(entry, index) => (
+              <span
+                class="uv-xlabel"
+                style={{
+                  left: `${entry.x}%`,
+                  transform:
+                    entries().length > 1 && index() === entries().length - 1
+                      ? "translateX(-100%)"
+                      : entries().length > 1 && index() === 0
+                        ? "none"
+                        : "translateX(-50%)",
+                }}
+              >
+                {index() % labelStep() === 0 || index() === entries().length - 1 ? entry.bucket.short : ""}
+              </span>
+            )}
+          </For>
+        </div>
       </div>
     </section>
   )

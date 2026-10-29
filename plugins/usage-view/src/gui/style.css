@@ -70,7 +70,7 @@
   padding: 10px 10px 8px 12px;
 }
 .uv-page .uv-toolbar {
-  padding: 0 0 12px;
+  padding: 40px 0 12px;
 }
 .uv-segmented {
   display: inline-flex;
@@ -385,57 +385,104 @@
 
 .uv-chart {
   display: grid;
-  grid-template-columns: repeat(var(--uv-bars, 7), minmax(0, 1fr));
-  gap: 2px;
-  height: 128px;
-  padding-top: 4px;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) 16px;
+  column-gap: 8px;
+  height: 144px;
 }
 @container (min-width: 760px) {
   .uv-chart {
-    height: 168px;
-    gap: 4px;
+    height: 184px;
   }
 }
-.uv-bar-col {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
+.uv-ylabels {
+  position: relative;
+  min-width: 34px;
+}
+.uv-ylabel {
+  position: absolute;
+  right: 0;
+  transform: translateY(-50%);
+  color: var(--uv-faint);
+  font-size: 10px;
+  line-height: 1;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.uv-plot {
+  position: relative;
   min-width: 0;
+}
+.uv-svg {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.uv-gridline {
+  stroke: var(--uv-border);
+}
+.uv-stop-top {
+  stop-color: var(--uv-accent);
+  stop-opacity: 0.28;
+}
+.uv-stop-bottom {
+  stop-color: var(--uv-accent);
+  stop-opacity: 0;
+}
+.uv-area {
+  fill: url(#uv-line-fill);
+}
+.uv-line {
+  fill: none;
+  stroke: var(--uv-accent);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.uv-hits {
+  position: absolute;
+  inset: 0;
+}
+.uv-hit {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 4px;
   cursor: default;
 }
-.uv-bar-track {
-  position: relative;
-  flex: 1;
-  display: flex;
-  align-items: flex-end;
-  border-bottom: 1px solid var(--uv-border);
-  border-radius: 3px 3px 0 0;
-}
-.uv-bar-col:hover .uv-bar-track {
+.uv-hit:hover {
   background: var(--uv-hover);
 }
-.uv-bar {
-  width: 100%;
-  border-radius: 3px 3px 0 0;
-  background: color-mix(in srgb, var(--uv-accent) 75%, transparent);
-  transition: height 160ms ease;
-}
-.uv-bar-col:hover .uv-bar {
+.uv-dot {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
   background: var(--uv-accent);
+  box-shadow: 0 0 0 2px var(--v2-background-bg-base, transparent);
+  opacity: 0;
+  transition: opacity 120ms ease;
+  pointer-events: none;
 }
-.uv-bar-empty,
-.uv-bar-future {
-  background: transparent;
+.uv-hit:hover .uv-dot {
+  opacity: 1;
 }
-.uv-bar-label {
+.uv-xlabels {
+  position: relative;
+  grid-column: 2;
   height: 16px;
-  padding-top: 3px;
+}
+.uv-xlabel {
+  position: absolute;
+  top: 3px;
   color: var(--uv-faint);
   font-size: 10px;
   line-height: 13px;
-  text-align: center;
   white-space: nowrap;
-  overflow: visible;
 }
 .uv-tip {
   display: flex;
