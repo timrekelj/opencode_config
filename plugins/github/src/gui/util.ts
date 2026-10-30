@@ -43,6 +43,18 @@ export const stateClass = (pr: Pick<PrSummary, "state" | "draft">) =>
 
 export const avatar = (login: string) => `https://github.com/${encodeURIComponent(login)}.png?size=48`
 
+/**
+ * Shortens a long name for a fixed-size control that cannot ellipsize on its own (e.g. a menu trigger button),
+ * keeping both ends so the prefix and the distinctive tail survive: `feature/…/apple-wallet`.
+ */
+export function ellipsizeMiddle(name: string, max = 32): string {
+  if (name.length <= max) return name
+  const keep = max - 1
+  const head = Math.ceil(keep / 2)
+  const tail = Math.floor(keep / 2)
+  return `${name.slice(0, head)}…${name.slice(name.length - tail)}`
+}
+
 // --- unified diff ---------------------------------------------------------------------------------------------------
 
 export interface DiffLine {

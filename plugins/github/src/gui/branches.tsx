@@ -5,7 +5,7 @@ import type { App } from "./app"
 import { errorMessage } from "./api"
 import { ErrorState, showErrorToast } from "./errors"
 import { edgePath, laneColor, layoutGraph, ROW_H } from "./graph"
-import { ago } from "./util"
+import { ago, ellipsizeMiddle } from "./util"
 
 const SCOPES: { value: GraphScope; label: string }[] = [
   { value: "local", label: "Local" },
@@ -255,7 +255,7 @@ export function BranchesView(props: { app: App; session: MountedSession }) {
         <ui.Menu
           trigger="button"
           icon="branch"
-          label={repo.latest?.branch ?? "…"}
+          label={ellipsizeMiddle(repo.latest?.branch ?? "…")}
           placement="bottom-start"
           disabled={loading()}
           items={[
