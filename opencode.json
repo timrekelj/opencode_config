@@ -1,9 +1,18 @@
 {
   "$schema": "https://opencode.ai/config.json",
   "plugins": [
-    "opencode-claude-auth@latest",
     "/Users/timrekelj/.config/opencode/plugins/github",
-    "/Users/timrekelj/.config/opencode/plugins/usage-view"
+    {
+      "package": "/Users/timrekelj/.config/opencode/plugins/usage-view",
+      "options": {
+        "aliases": {
+          "claude-agent/opus": "claude-opus-5-5",
+          "claude-agent/sonnet": "claude-sonnet-5-5",
+          "claude-agent/haiku": "claude-haiku-5-5",
+          "claude-agent/fable": "claude-fable-5-1"
+        }
+      }
+    }
   ],
   "mcp": {
     "servers": {
