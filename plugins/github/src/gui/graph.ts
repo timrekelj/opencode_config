@@ -64,26 +64,44 @@ export function layoutGraph(commits: GraphCommit[]): GraphLayout {
 
   for (let i = 0; i < commits.length; i++) {
     const commit = commits[i]
-    let lane = laneOf(commit.hash)
-    if (lane === -1) lane = freeLane()
+    // Several lanes can wait for the same commit (two branches forked from it, or a merge's parent that is also
+    // another branch's parent). The commit takes the first; the others curve into it and end here.
+    const holders = lanes.flatMap((hash, k) => (hash === commit.hash ? [k] : []))
+    const lane = holders[0] ?? freeLane()
+    for (const k of holders.slice(1)) {
+      lanes[k] = null
+      const straight = verticals.findIndex((v) => v.lane === k && v.toRow === i)
+      if (straight !== -1) verticals.splice(straight, 1)
+      edges.push({ fromLane: k, fromRow: i - 1, toLane: lane, toRow: i })
+    }
     lanes[lane] = null
     rows.push({ commit, lane, index: i })
     rowLane.set(commit.hash, lane)
 
-    if (commit.parents.length > 0) lanes[lane] = commit.parents[0]
-    for (const parent of commit.parents) {
+    // Lanes a merge opens on this row: the edge from the commit draws their first segment.
+    const opened = new Set<number>()
+    commit.parents.forEach((parent, p) => {
       const parentRow = index.get(parent)
       if (parentRow !== undefined && parentRow < i && rowLane.has(parent)) {
         // Parent was already drawn above (commit-date skew): edge back up to its lane, no lane assignment.
         edges.push({ fromLane: lane, fromRow: i, toLane: rowLane.get(parent)!, toRow: parentRow })
-        continue
+        return
       }
-      const toLane = laneOf(parent) === -1 ? (lanes[freeLane()] = parent, laneOf(parent)) : laneOf(parent)
-      if (toLane === lane) continue // the first parent continues straight down this lane
-      edges.push({ fromLane: lane, fromRow: i, toLane, toRow: parentRow ?? commits.length })
-    }
+      if (p === 0) {
+        lanes[lane] = parent // the first parent continues straight down this lane
+        return
+      }
+      let toLane = laneOf(parent)
+      if (toLane === -1) {
+        toLane = freeLane()
+        lanes[toLane] = parent
+        opened.add(toLane)
+      }
+      // Join the parent's lane on the next row; that lane carries the line on to the parent.
+      edges.push({ fromLane: lane, fromRow: i, toLane, toRow: i + 1 })
+    })
     for (let k = 0; k < lanes.length; k++) {
-      if (lanes[k] !== null) verticals.push({ lane: k, fromRow: i, toRow: i + 1 })
+      if (lanes[k] !== null && !opened.has(k)) verticals.push({ lane: k, fromRow: i, toRow: i + 1 })
     }
   }
 

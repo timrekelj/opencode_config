@@ -86,6 +86,19 @@ check("layout lanes >= 2", layout.lanes >= 2, layout.lanes)
 check("merge edge from different lane", layout.edges.some((e) => e.fromLane !== e.toLane), layout.edges)
 check("edges never point at own row, lanes valid", layout.edges.every((e) => e.toRow !== e.fromRow && e.toLane < layout.lanes && e.fromLane < layout.lanes), layout.edges)
 check("verticals within bounds", layout.verticals.every((v) => v.toRow <= layout.rows.length && v.lane < layout.lanes))
+// Every parent is loaded, so no lane may run off the bottom: branches that share a fork point must end there.
+check(
+  "no line runs to the bottom when all parents are loaded",
+  !layout.verticals.some((v) => v.toRow === layout.rows.length) && !layout.edges.some((e) => e.toRow >= layout.rows.length),
+  layout.verticals.filter((v) => v.toRow === layout.rows.length),
+)
+// Two branch tips forked from the same commit (feature/x and old-branch both at c6, dev merged main) converge.
+const converged = layoutGraph([
+  { hash: "t1", parents: ["base"], subject: "", author: "", time: 3, refs: [], head: false },
+  { hash: "t2", parents: ["base"], subject: "", author: "", time: 2, refs: [], head: false },
+  { hash: "base", parents: [], subject: "", author: "", time: 1, refs: [], head: false },
+])
+check("sibling branches converge into their fork commit", converged.rows[2].lane === 0 && converged.edges.some((e) => e.fromLane === 1 && e.toLane === 0 && e.toRow === 2) && !converged.verticals.some((v) => v.toRow === 3), converged)
 const gLim = await git.graph(work, "all", 3)
 check("graph limit 3", gLim.commits.length === 3, gLim.commits.length)
 const layoutLim = layoutGraph(gLim.commits)
