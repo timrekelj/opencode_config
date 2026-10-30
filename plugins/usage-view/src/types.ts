@@ -49,3 +49,31 @@ export interface RetainedResult {
 }
 
 export const modelKey = (model: ModelKey) => `${model.providerID}/${model.id}`
+
+export interface LimitWindow {
+  id: string
+  label: string
+  kind: "session" | "weekly" | "monthly" | "other"
+  /** Percentage of the window used, 0-100, as reported by the provider. */
+  usedPercent: number
+  /** Epoch ms when the window resets, if the provider reports it. */
+  resetsAt?: number
+  windowDurationMins?: number
+}
+
+export interface LimitProvider {
+  id: "claude" | "codex"
+  label: string
+  /** Plan or account label, if known. Never includes tokens or emails. */
+  account?: string
+  windows: LimitWindow[]
+  /** Set when the provider could not be reached or is not signed in. */
+  error?: string
+  /** Banked rate-limit reset credits (Codex), if reported. */
+  resetCredits?: number
+}
+
+export interface LimitsResult {
+  checkedAt: number
+  providers: LimitProvider[]
+}

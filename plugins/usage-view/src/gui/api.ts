@@ -1,6 +1,6 @@
 import type { Context } from "@opencode/plugin/gui"
 import { UsageView } from "../rpc"
-import { modelKey, type ModelKey, type Price, type PricesResult, type RetainedRange, type RetainedResult } from "../types"
+import { modelKey, type LimitsResult, type ModelKey, type Price, type PricesResult, type RetainedRange, type RetainedResult } from "../types"
 import { totalTokens, type Tokens } from "./format"
 
 type Client = Context["client"]
@@ -147,6 +147,18 @@ async function listSessions(client: Client, project: string | undefined, from: n
 type UsageRpc = {
   prices(input: object, options: object): Promise<PricesResult>
   retained(input: object, options: object): Promise<RetainedResult>
+  limits(input: object, options: object): Promise<LimitsResult>
+}
+
+/** Subscription limits from the providers (Claude Code, Codex), not from local history. */
+export async function loadLimits(
+  ctx: Pick<Context, "client">,
+  input: { refresh?: boolean; directory?: string },
+  signal: AbortSignal,
+): Promise<LimitsResult> {
+  const rpc = ctx.client.rpc(UsageView) as unknown as UsageRpc
+  const options = input.directory ? { location: { directory: input.directory }, signal } : { signal }
+  return rpc.limits({ refresh: input.refresh === true }, options)
 }
 
 /** Adds the usage of deleted sessions to OpenCode's stats for the same range. */

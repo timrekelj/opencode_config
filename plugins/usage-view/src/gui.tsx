@@ -17,7 +17,7 @@ export default Plugin.define({
   },
   setup(ctx) {
     // Shared by the panel and the settings page so both remember the same choices while the app runs.
-    const [prefs, setPrefs] = createStore<Prefs>({ range: "7d", scope: "project", metric: "cost" })
+    const [prefs, setPrefs] = createStore<Prefs>({ view: "usage", range: "7d", scope: "project", metric: "cost" })
     const key = `${ctx.id}:${TAB}`
 
     ctx.add(Style, css)

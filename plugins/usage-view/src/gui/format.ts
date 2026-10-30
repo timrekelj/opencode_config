@@ -75,6 +75,22 @@ export function duration(ms: number | undefined): string {
   return `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`
 }
 
+/** Time remaining until a future timestamp, e.g. "in 3h". */
+export function until(time: number): string {
+  const seconds = (time - Date.now()) / 1000
+  if (seconds < 60) return "soon"
+  const units: [number, string][] = [
+    [60 * 60 * 24 * 365, "y"],
+    [60 * 60 * 24 * 30, "mo"],
+    [60 * 60 * 24 * 7, "w"],
+    [60 * 60 * 24, "d"],
+    [60 * 60, "h"],
+    [60, "m"],
+  ]
+  for (const [size, unit] of units) if (seconds >= size) return `in ${Math.floor(seconds / size)}${unit}`
+  return "soon"
+}
+
 export function ago(time: number): string {
   const seconds = Math.max(0, (Date.now() - time) / 1000)
   if (seconds < 60) return "just now"

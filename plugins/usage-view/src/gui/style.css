@@ -546,3 +546,52 @@
   color: var(--uv-muted);
   font-size: 10px;
 }
+
+/* limits ------------------------------------------------------------------------------------------------------------*/
+
+.uv-limit-provider {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--uv-border);
+  border-radius: calc(var(--uv-radius) + 2px);
+  background: var(--uv-layer);
+}
+.uv-limit-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.uv-limit-window {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.uv-limit-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.uv-limit-row > span:first-child {
+  flex: 1;
+  font-size: var(--uv-small);
+}
+.uv-limit-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--uv-layer-2);
+  overflow: hidden;
+}
+.uv-limit-fill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--uv-accent);
+}
+.uv-limit-fill-warn {
+  background: var(--uv-warning);
+}
+.uv-limit-fill-bad {
+  background: var(--uv-danger);
+}

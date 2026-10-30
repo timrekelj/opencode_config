@@ -8,6 +8,21 @@ because `cost` is then 0 everywhere and the model catalog's prices are zeroed.
 - **Usage** side-panel tab: in the session panel **+** menu, or the *Show usage* command.
 - **Settings → Usage**: works without an open session. *Show usage* opens this page when no session is open.
 
+## Limits view
+
+The toolbar's **Usage / Limits** toggle switches to subscription limits, reported by the providers themselves (not estimated
+from local history, and not your bill):
+
+- **Claude Code**: reads the OAuth token from `CLAUDE_CODE_OAUTH_TOKEN`, the macOS Keychain (`Claude Code-credentials`,
+  hashed variant when `CLAUDE_CONFIG_DIR` is set), or `$CLAUDE_CONFIG_DIR/.credentials.json` (default `~/.claude/.credentials.json`),
+  refreshing it on 401/403, and calls `https://api.anthropic.com/api/oauth/usage`.
+  Shows the 5-hour session window, the weekly window, and plan-specific weekly windows (Opus, Sonnet, Claude Design) when present.
+- **Codex**: reads `~/.codex/auth.json` (or `$CODEX_HOME/auth.json`), takes the ChatGPT account id from the token JWT, and calls
+  `https://chatgpt.com/backend-api/wham/usage`. Shows the primary and secondary windows and banked reset credits.
+
+Results are cached for 60 seconds; **Refresh limits** forces a new check. The Anthropic usage endpoint is rate limited per
+access token, so don't poll it aggressively. API-key and proxy accounts report no subscription limits.
+
 ## Features
 
 - **Range**: Today (hourly), 7 days and 30 days (daily), All time (daily, or about 12 weekly buckets).

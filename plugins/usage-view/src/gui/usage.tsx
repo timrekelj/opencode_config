@@ -2,6 +2,7 @@ import { createLatest, type Context, type MountedSession } from "@opencode/plugi
 import { createMemo, createSignal, For, Show, type JSX } from "solid-js"
 import { modelKey, type Price } from "../types"
 import { errorMessage, loadUsage, RANGES, type Bucket, type RangeId, type Scope, type SessionInfo, type Stats, type UsageData } from "./api"
+import { LimitsView } from "./limits"
 import {
   ago,
   cacheSavings,
@@ -19,8 +20,10 @@ import {
 } from "./format"
 
 export type Metric = "cost" | "tokens"
+export type View = "usage" | "limits"
 
 export interface Prefs {
+  view: View
   range: RangeId
   scope: Scope
   metric: Metric
@@ -153,7 +156,17 @@ export function UsageView(props: UsageViewProps) {
     <div class={`uv-root uv-${props.variant}`}>
       <div class="uv-toolbar">
         <Segmented
-          label="Range"
+          label="View"
+          value={props.prefs.view}
+          options={[
+            { value: "usage", label: "Usage" },
+            { value: "limits", label: "Limits" },
+          ]}
+          onChange={(view) => props.setPrefs({ view })}
+        />
+        <Show when={props.prefs.view === "usage"}>
+          <Segmented
+            label="Range"
           value={props.prefs.range}
           options={RANGES.map((r) => ({ value: r.value, label: r.short, title: r.label }))}
           onChange={(range) => props.setPrefs({ range })}
@@ -172,19 +185,26 @@ export function UsageView(props: UsageViewProps) {
           ]}
           onChange={(scope) => props.setPrefs({ scope })}
         />
+        </Show>
         <span class="uv-spacer" />
-        <ui.Tooltip value="Refresh">
-          <ui.IconButton
-            icon="refresh"
-            label="Refresh"
-            variant="ghost"
-            size="small"
-            busy={usage.loading}
-            onClick={() => setVersion((v) => v + 1)}
-          />
-        </ui.Tooltip>
+        <Show when={props.prefs.view === "usage"}>
+          <ui.Tooltip value="Refresh">
+            <ui.IconButton
+              icon="refresh"
+              label="Refresh"
+              variant="ghost"
+              size="small"
+              busy={usage.loading}
+              onClick={() => setVersion((v) => v + 1)}
+            />
+          </ui.Tooltip>
+        </Show>
       </div>
 
+      <Show when={props.prefs.view === "limits"}>
+        <LimitsView ctx={props.ctx} directory={directory} />
+      </Show>
+      <Show when={props.prefs.view === "usage"}>
       <div class="uv-scroll">
         <Show when={usage.error}>
           {(error) => (
@@ -236,6 +256,7 @@ export function UsageView(props: UsageViewProps) {
           )}
         </Show>
       </div>
+      </Show>
     </div>
   )
 }

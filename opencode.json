@@ -3,8 +3,7 @@
   "plugins": [
     "opencode-claude-auth@latest",
     "/Users/timrekelj/.config/opencode/plugins/github",
-    "/Users/timrekelj/.config/opencode/plugins/usage-view",
-    "/Users/timrekelj/.config/opencode/plugins/x-view"
+    "/Users/timrekelj/.config/opencode/plugins/usage-view"
   ],
   "mcp": {
     "servers": {

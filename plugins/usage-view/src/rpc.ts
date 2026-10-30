@@ -87,6 +87,49 @@ export const UsageView = Rpc.define({
       },
       errors,
     },
+    limits: {
+      input: {
+        type: "object",
+        properties: { refresh: { type: "boolean" } },
+      },
+      output: {
+        type: "object",
+        properties: {
+          checkedAt: num,
+          providers: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                id: { type: "string", enum: ["claude", "codex"] },
+                label: str,
+                account: str,
+                error: str,
+                resetCredits: num,
+                windows: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      id: str,
+                      label: str,
+                      kind: { type: "string", enum: ["session", "weekly", "monthly", "other"] },
+                      usedPercent: num,
+                      resetsAt: num,
+                      windowDurationMins: num,
+                    },
+                    required: ["id", "label", "kind", "usedPercent"],
+                  },
+                },
+              },
+              required: ["id", "label", "windows"],
+            },
+          },
+        },
+        required: ["checkedAt", "providers"],
+      },
+      errors,
+    },
   },
   events: {},
 })
