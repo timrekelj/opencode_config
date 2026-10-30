@@ -58,6 +58,13 @@ Matching order:
    family names (`opus`, `sonnet`, `haiku`, `fable`) are never priced. The model's own provider is
    searched first, then anthropic, openai, google and the rest. Only paid entries count here.
 
+The `aliases` option maps a model, as `provider/id` or bare `id`, to the model id to price it as. Use it for bare family
+names such as Claude Agent's `opus`, which are otherwise unpriced:
+
+```jsonc
+{ "aliases": { "claude-agent/opus": "claude-opus-5-5" } }
+```
+
 A model with no match shows `—`. A total that mixes priced and unpriced models is shown as `≥ $x`.
 
 ## Deleted sessions

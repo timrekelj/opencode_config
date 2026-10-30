@@ -441,20 +441,20 @@
   stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
+  transition: stroke-opacity 120ms ease;
+}
+/* While hovering, the line outside the hovered bucket fades so that bucket's stretch stands out. */
+.uv-line-dim {
+  stroke-opacity: 0.35;
+}
+.uv-line-focus {
+  stroke: var(--uv-line-focus, var(--uv-accent));
+  transition: none;
 }
 .uv-hits {
   position: absolute;
   inset: 0;
-}
-.uv-hit {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  border-radius: 4px;
   cursor: default;
-}
-.uv-hit:hover {
-  background: var(--uv-hover);
 }
 .uv-dot {
   position: absolute;
@@ -464,12 +464,30 @@
   border-radius: 50%;
   background: var(--uv-accent);
   box-shadow: 0 0 0 2px var(--v2-background-bg-base, transparent);
-  opacity: 0;
-  transition: opacity 120ms ease;
   pointer-events: none;
 }
-.uv-hit:hover .uv-dot {
-  opacity: 1;
+.uv-tip-float {
+  position: absolute;
+  z-index: 1;
+  transform: translate(12px, calc(-100% - 8px));
+  padding: 6px 8px;
+  border: 1px solid var(--uv-border);
+  border-radius: var(--uv-radius);
+  background: var(--v2-background-bg-base, var(--uv-layer-2));
+  font-size: var(--uv-small);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.uv-tip-left {
+  transform: translate(calc(-100% - 12px), calc(-100% - 8px));
+}
+.uv-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 .uv-xlabels {
   position: relative;

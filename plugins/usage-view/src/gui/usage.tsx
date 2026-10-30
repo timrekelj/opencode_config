@@ -364,20 +364,58 @@ function CostTypes(props: { parts: CostParts; total: number }) {
   )
 }
 
-/** Catmull-Rom spline through the points, as an SVG path in a 0–100 viewBox. */
+/**
+ * Monotone cubic (Fritsch–Carlson) spline through the points, as an SVG path in a 0–100 viewBox. Unlike Catmull-Rom it
+ * never overshoots, so a flat run followed by a rise doesn't dip below zero first.
+ */
 function smoothPath(pts: { x: number; y: number }[]): string {
   if (pts.length === 0) return ""
   const f = (n: number) => n.toFixed(2)
-  if (pts.length === 1) return `M ${f(pts[0]!.x)} ${f(pts[0]!.y)}`
   let d = `M ${f(pts[0]!.x)} ${f(pts[0]!.y)}`
+  if (pts.length === 1) return d
+  const m = tangents(pts)
   for (let i = 0; i < pts.length - 1; i++) {
-    const p0 = pts[i - 1] ?? pts[i]!
     const p1 = pts[i]!
     const p2 = pts[i + 1]!
-    const p3 = pts[i + 2] ?? p2
-    d += ` C ${f(p1.x + (p2.x - p0.x) / 6)} ${f(p1.y + (p2.y - p0.y) / 6)}, ${f(p2.x - (p3.x - p1.x) / 6)} ${f(p2.y - (p3.y - p1.y) / 6)}, ${f(p2.x)} ${f(p2.y)}`
+    const h = (p2.x - p1.x) / 3
+    d += ` C ${f(p1.x + h)} ${f(p1.y + m[i]! * h)}, ${f(p2.x - h)} ${f(p2.y - m[i + 1]! * h)}, ${f(p2.x)} ${f(p2.y)}`
   }
   return d
+}
+
+/** The y of the same spline at `x`, clamped to the first and last point, so a marker can follow the line. */
+function splineAt(pts: { x: number; y: number }[], x: number): number {
+  if (pts.length === 0) return 100
+  if (pts.length === 1 || x <= pts[0]!.x) return pts[0]!.y
+  if (x >= pts[pts.length - 1]!.x) return pts[pts.length - 1]!.y
+  const m = tangents(pts)
+  const i = Math.max(0, pts.findIndex((p) => p.x > x) - 1)
+  const p1 = pts[i]!
+  const p2 = pts[i + 1]!
+  const h = p2.x - p1.x
+  const t = (x - p1.x) / h
+  const t2 = t * t
+  const t3 = t2 * t
+  return (
+    (2 * t3 - 3 * t2 + 1) * p1.y + (t3 - 2 * t2 + t) * h * m[i]! + (-2 * t3 + 3 * t2) * p2.y + (t3 - t2) * h * m[i + 1]!
+  )
+}
+
+function tangents(pts: { x: number; y: number }[]): number[] {
+  const n = pts.length
+  const dx = pts.slice(1).map((p, i) => p.x - pts[i]!.x)
+  const slope = pts.slice(1).map((p, i) => (p.y - pts[i]!.y) / dx[i]!)
+  // Tangents: zero at local extrema and flat segments, otherwise the harmonic mean of neighbouring slopes.
+  return pts.map((_, i) => {
+    if (i === 0) return slope[0]!
+    if (i === n - 1) return slope[n - 2]!
+    const a = slope[i - 1]!
+    const b = slope[i]!
+    if (a * b <= 0) return 0
+    const w1 = 2 * dx[i]! + dx[i - 1]!
+    const w2 = dx[i]! + 2 * dx[i - 1]!
+    return (w1 + w2) / (w1 / a + w2 / b)
+  })
 }
 
 function Chart(props: {
@@ -437,7 +475,26 @@ function Chart(props: {
     if (pts.length === 0) return ""
     return `${line()} L ${pts[pts.length - 1]!.x.toFixed(2)} 100 L ${pts[0]!.x.toFixed(2)} 100 Z`
   })
-  const hitWidth = () => (entries().length > 0 ? 100 / entries().length : 100)
+  /** Pointer x over the plot, in the 0–100 viewBox, clamped to the drawn line. Null when not hovering. */
+  const [hoverX, setHoverX] = createSignal<number | null>(null)
+  const hover = createMemo(() => {
+    const x = hoverX()
+    const pts = points()
+    if (x === null || pts.length === 0) return null
+    const k = pts.reduce((best, p, i) => (Math.abs(p.x - x) < Math.abs(pts[best]!.x - x) ? i : best), 0)
+    const point = pts[k]!
+    // The bucket's stretch of line runs halfway to each neighbouring point.
+    const from = k > 0 ? (pts[k - 1]!.x + point.x) / 2 : point.x
+    const to = k < pts.length - 1 ? (point.x + pts[k + 1]!.x) / 2 : point.x
+    return { x, y: splineAt(pts, x), point, from, to }
+  })
+  const track = (event: PointerEvent) => {
+    const pts = points()
+    if (pts.length === 0) return
+    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+    const x = rect.width > 0 ? ((event.clientX - rect.left) / rect.width) * 100 : 0
+    setHoverX(Math.min(pts[pts.length - 1]!.x, Math.max(pts[0]!.x, x)))
+  }
 
   return (
     <section class="uv-section">
@@ -477,36 +534,46 @@ function Chart(props: {
               {(g) => <line class="uv-gridline" x1="0" x2="100" y1={g.y} y2={g.y} vector-effect="non-scaling-stroke" />}
             </For>
             <path class="uv-area" d={area()} />
-            <path class="uv-line" d={line()} vector-effect="non-scaling-stroke" />
+            <path class="uv-line" classList={{ "uv-line-dim": !!hover() }} d={line()} vector-effect="non-scaling-stroke" />
+            <Show when={hover()}>
+              {(h) => (
+                <>
+                  <clipPath id="uv-line-focus">
+                    {/* Padded vertically so the stroke isn't cut at the top and bottom of the plot. */}
+                    <rect x={h().from} y="-10" width={Math.max(0, h().to - h().from)} height="120" />
+                  </clipPath>
+                  <path class="uv-line uv-line-focus" d={line()} clip-path="url(#uv-line-focus)" vector-effect="non-scaling-stroke" />
+                </>
+              )}
+            </Show>
           </svg>
-          <div class="uv-hits" role="list">
+          <div class="uv-hits" onPointerMove={track} onPointerLeave={() => setHoverX(null)}>
+            <Show when={hover()}>
+              {(h) => (
+                <>
+                  <span class="uv-dot" style={{ left: `${h().x}%`, top: `${h().y}%` }} />
+                  <span
+                    class={`uv-tip uv-tip-float${h().x > 50 ? " uv-tip-left" : ""}`}
+                    style={{ left: `${h().x}%`, top: `${h().y}%` }}
+                  >
+                    <strong>{h().point.bucket.label}</strong>
+                    <span>
+                      {costLabel(h().point.cost)} est. · {tokens(h().point.tokens)} tokens · {exact(h().point.steps)} steps
+                    </span>
+                  </span>
+                </>
+              )}
+            </Show>
+          </div>
+          <ul class="uv-sr-only">
             <For each={points()}>
               {(p) => (
-                <props.ui.Tooltip
-                  value={
-                    <span class="uv-tip">
-                      <strong>{p.bucket.label}</strong>
-                      <span>
-                        {costLabel(p.cost)} est. · {tokens(p.tokens)} tokens · {exact(p.steps)} steps
-                      </span>
-                    </span>
-                  }
-                >
-                  <div
-                    class="uv-hit"
-                    role="listitem"
-                    style={{ left: `${(p.i / entries().length) * 100}%`, width: `${hitWidth()}%` }}
-                    aria-label={`${p.bucket.label}: ${costLabel(p.cost)}, ${tokens(p.tokens)} tokens`}
-                  >
-                    <span
-                      class="uv-dot"
-                      style={{ left: `${((p.x - (p.i / entries().length) * 100) / hitWidth()) * 100}%`, top: `${p.y}%` }}
-                    />
-                  </div>
-                </props.ui.Tooltip>
+                <li>
+                  {p.bucket.label}: {costLabel(p.cost)}, {tokens(p.tokens)} tokens
+                </li>
               )}
             </For>
-          </div>
+          </ul>
         </div>
         <div class="uv-xlabels">
           <For each={entries()}>

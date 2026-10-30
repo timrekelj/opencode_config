@@ -43,7 +43,20 @@ const toPrice = (cost: RawCost | undefined, source: string): Price | null => {
 
 const paid = (price: Price | null) => !!price && (price.input > 0 || price.output > 0)
 
-export function lookup(catalog: Catalog, model: ModelKey): Price | null {
+/**
+ * Maps a model, keyed by `provider/id` or bare `id`, to the model id it stands for. Lets bare family names such as
+ * `claude-agent/opus` be priced once the user says which generation they resolve to.
+ */
+export type Aliases = Record<string, string>
+
+export const parseAliases = (value: unknown): Aliases =>
+  value && typeof value === "object"
+    ? Object.fromEntries(Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === "string"))
+    : {}
+
+export function lookup(catalog: Catalog, model: ModelKey, aliases: Aliases = {}): Price | null {
+  const target = aliases[modelKey(model)] ?? aliases[model.id]
+  if (target) return lookup(catalog, { providerID: model.providerID, id: target })
   const own = catalog[model.providerID]?.models
   const exact = toPrice(own?.[model.id]?.cost, modelKey(model))
   if (exact) return exact
@@ -75,6 +88,7 @@ export class Pricing {
   constructor(
     private readonly url = MODELS_DEV_URL,
     private readonly fetcher: typeof fetch = fetch,
+    private readonly aliases: Aliases = {},
   ) {}
 
   private async load(force: boolean): Promise<Catalog> {
@@ -107,7 +121,7 @@ export class Pricing {
     const prices: Record<string, Price | null> = {}
     for (const model of models) {
       if (!model || typeof model.providerID !== "string" || typeof model.id !== "string") continue
-      prices[modelKey(model)] = lookup(catalog, model)
+      prices[modelKey(model)] = lookup(catalog, model, this.aliases)
     }
     return { fetchedAt: this.fetchedAt, prices }
   }

@@ -1,7 +1,7 @@
 import { Plugin } from "@opencode/plugin"
 import { DEFAULT_RETENTION_DAYS, defaultDatabasePath, Ledger } from "./ledger"
 import { Limits } from "./limits"
-import { Pricing } from "./pricing"
+import { parseAliases, Pricing } from "./pricing"
 import { UsageView } from "./rpc"
 import type { ModelKey } from "./types"
 
@@ -13,7 +13,11 @@ const registry = globalThis as typeof globalThis & { [SHARED]?: Map<string, Shar
 export default Plugin.define({
   id: "usage-view",
   async setup(ctx) {
-    const pricing = new Pricing(typeof ctx.options.url === "string" ? ctx.options.url : undefined)
+    const pricing = new Pricing(
+      typeof ctx.options.url === "string" ? ctx.options.url : undefined,
+      fetch,
+      parseAliases(ctx.options.aliases),
+    )
     const limits = new Limits()
 
     const path = typeof ctx.options.database === "string" ? ctx.options.database : defaultDatabasePath(ctx.app.channel)
