@@ -271,7 +271,6 @@ export function BranchesView(props: { app: App; session: MountedSession }) {
         <Show when={repo.latest?.nameWithOwner}>{(n) => <span class="prr-muted prr-ellipsis">{n()}</span>}</Show>
         <span class="prr-spacer" />
         <ui.Menu
-          icon="menu"
           label="Repository actions"
           placement="bottom-end"
           disabled={busy()}
@@ -350,7 +349,7 @@ export function BranchesView(props: { app: App; session: MountedSession }) {
                   </Show>
                   <span class="prr-spacer" />
                   <span class="prr-muted prr-ellipsis gg-branch-subject">{b.subject}</span>
-                  <ui.Menu icon="menu" label={`Actions for ${b.name}`} placement="bottom-end" items={branchMenu(b)} />
+                  <ui.Menu label={`Actions for ${b.name}`} placement="bottom-end" items={branchMenu(b)} />
                 </div>
               )}
             </For>
@@ -435,7 +434,7 @@ export function BranchesView(props: { app: App; session: MountedSession }) {
                           {r.commit.author} · {agoUnix(r.commit.time)} ·{" "}
                           <span class="prr-mono">{r.commit.hash.slice(0, 7)}</span>
                         </span>
-                        <ui.Menu icon="menu" label={`Actions for ${r.commit.hash.slice(0, 7)}`} placement="bottom-end" items={commitMenu(r.commit)} />
+                        <ui.Menu label={`Actions for ${r.commit.hash.slice(0, 7)}`} placement="bottom-end" items={commitMenu(r.commit)} />
                       </div>
                     )}
                   </For>
