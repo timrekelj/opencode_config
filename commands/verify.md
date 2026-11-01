@@ -4,6 +4,6 @@ agent: build
 subagent: true
 ---
 
-Load the `pitcrew-review` skill and follow it. Arguments (PR number, branch, repo paths, focus), if any:
+Load the `verify` skill and follow it. Arguments (PR number, branch, repo paths, focus), if any:
 
 $ARGUMENTS

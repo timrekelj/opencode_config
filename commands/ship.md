@@ -4,6 +4,6 @@ agent: build
 subagent: false
 ---
 
-Load the `pitcrew-ship` skill and follow it. Arguments (Linear ticket id, notes), if any:
+Load the `ship` skill and follow it. Arguments (Linear ticket id, notes), if any:
 
 $ARGUMENTS
