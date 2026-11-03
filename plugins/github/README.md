@@ -2,6 +2,8 @@
 
 GitHub pull requests and local git branches in the OpenCode Desktop side panel, modeled on the T3 Code PR panel.
 
+> Demo edit for testing the panel.
+
 Uses the GitHub CLI on the machine running the OpenCode server, so `gh auth login` must be done.
 
 ## Features

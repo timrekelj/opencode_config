@@ -3,7 +3,7 @@ import type { CheckState, PrSummary, Rollup } from "../types"
 
 export function ago(iso: string): string {
   const seconds = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000)
-  if (seconds < 60) return "just now"
+  if (seconds < 45) return "just now"
   const units: [number, string][] = [
     [60 * 60 * 24 * 365, "y"],
     [60 * 60 * 24 * 30, "mo"],
@@ -41,6 +41,7 @@ export const stateLabel = (pr: Pick<PrSummary, "state" | "draft">) =>
 export const stateClass = (pr: Pick<PrSummary, "state" | "draft">) =>
   pr.state === "MERGED" ? "merged" : pr.state === "CLOSED" ? "closed" : pr.draft ? "draft" : "open"
 
+// Avatars come from github.com directly; 48px covers 2x displays at 24px.
 export const avatar = (login: string) => `https://github.com/${encodeURIComponent(login)}.png?size=48`
 
 /**
@@ -91,3 +92,6 @@ export function parsePatch(patch: string): DiffLine[] {
 
 export const lineSide = (line: DiffLine) => (line.kind === "del" ? "LEFT" : "RIGHT") as "LEFT" | "RIGHT"
 export const lineNumber = (line: DiffLine) => (line.kind === "del" ? line.old : line.new)
+
+// demo: trailing change far from the first hunk
+export const DEMO = true
