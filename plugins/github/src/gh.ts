@@ -20,7 +20,7 @@ import type {
 
 export class GhError extends Error {}
 
-const EXTRA_PATH = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"]
+const EXTRA_PATH = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/run/current-system/sw/bin"]
 
 export interface GhOptions {
   bin: string
