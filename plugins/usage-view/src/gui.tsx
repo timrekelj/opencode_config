@@ -1,5 +1,7 @@
 import { Command, MenuItem, Panel, Plugin, SettingsPage, Style, type PanelTab } from "@opencode/plugin/gui"
+import { onCleanup } from "solid-js"
 import { createStore } from "solid-js/store"
+import { startAlerts } from "./gui/alerts"
 import { UsageView, type Prefs } from "./gui/usage"
 import css from "./gui/style.css?inline"
 
@@ -53,6 +55,13 @@ export default Plugin.define({
       if (session) ctx.layout.open(key, session, { tab: "select" })
       else ctx.layout.settings(TAB)
     }
+
+    // Limit alerts: toasts when a Claude Code or Codex window crosses 80% or 95%, panel open or not.
+    const stop = startAlerts(ctx, () => {
+      setPrefs({ view: "limits" })
+      open()
+    })
+    if (stop) onCleanup(stop)
 
     ctx.add(
       MenuItem,

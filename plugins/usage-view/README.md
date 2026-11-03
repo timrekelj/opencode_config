@@ -20,6 +20,11 @@ from local history, and not your bill):
 - **Codex**: reads `~/.codex/auth.json` (or `$CODEX_HOME/auth.json`), takes the ChatGPT account id from the token JWT, and calls
   `https://chatgpt.com/backend-api/wham/usage`. Shows the primary and secondary windows and banked reset credits.
 
+**Limit alerts**: while the app is open, the limits are checked every 5 minutes (the first check 20 seconds after
+start), panel open or not. When a window crosses 80% or 95%, a toast says how much is left and when it resets, with a
+*Show limits* button. Each crossing warns once per window reset. Set the `alerts` option to other thresholds
+(`"alerts": [70, 90]`) or turn them off (`"alerts": false`).
+
 Results are cached for 60 seconds; **Refresh limits** forces a new check. The Anthropic usage endpoint is rate limited per
 access token, so don't poll it aggressively. API-key and proxy accounts report no subscription limits.
 
