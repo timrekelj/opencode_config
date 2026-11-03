@@ -5,8 +5,9 @@ import { parseAliases, Pricing } from "./pricing"
 import { UsageView } from "./rpc"
 import type { ModelKey } from "./types"
 
-// The server loads the plugin once per location; they all share one ledger.
-const SHARED = Symbol.for("usage-view.ledger")
+// The server loads the plugin once per location; they all share one ledger. The key is versioned and each entry is
+// checked against this module's Ledger class, so a reload with new code never keeps an instance of the old one.
+const SHARED = Symbol.for("usage-view.ledger.v2")
 type Shared = { ledger: Ledger; refs: number; stop: () => void }
 const registry = globalThis as typeof globalThis & { [SHARED]?: Map<string, Shared> }
 
@@ -23,6 +24,8 @@ export default Plugin.define({
     const path = typeof ctx.options.database === "string" ? ctx.options.database : defaultDatabasePath(ctx.app.channel)
     const ledgers = (registry[SHARED] ??= new Map())
     let shared = ledgers.get(path)
+    // An entry from before a code reload belongs to the old module; its instances stop it on their own cleanup.
+    if (shared && !(shared.ledger instanceof Ledger)) shared = undefined
     if (!shared) {
       const days = Number(ctx.options.retentionDays)
       const ledger = new Ledger(
@@ -62,14 +65,22 @@ export default Plugin.define({
           project: typeof i?.project === "string" ? i.project : undefined,
         }),
       ),
+      daily: handle<{ from?: number; to?: number; project?: string; timezone?: string }>((i) =>
+        ledger.daily({
+          from: typeof i?.from === "number" ? i.from : 0,
+          to: typeof i?.to === "number" ? i.to : Date.now(),
+          project: typeof i?.project === "string" ? i.project : undefined,
+          timezone: typeof i?.timezone === "string" ? i.timezone : undefined,
+        }),
+      ),
       limits: handle<{ refresh?: boolean }>((i, signal) => limits.limits(i?.refresh === true, signal)),
     } as any)
 
+    const mine = shared
     return () => {
-      const current = ledgers.get(path)
-      if (!current || --current.refs > 0) return
-      current.stop()
-      ledgers.delete(path)
+      if (--mine.refs > 0) return
+      mine.stop()
+      if (ledgers.get(path) === mine) ledgers.delete(path)
     }
   },
 })

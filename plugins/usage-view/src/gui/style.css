@@ -14,6 +14,12 @@
   --uv-small: var(--font-size-small, 12px);
   --uv-xsmall: var(--font-size-x-small, 11px);
   --uv-radius: var(--radius-md, 6px);
+  /* Heatmap and legend steps, from empty to the busiest days. */
+  --uv-level-0: var(--uv-layer-2);
+  --uv-level-1: color-mix(in srgb, var(--uv-accent) 30%, var(--uv-layer-2));
+  --uv-level-2: color-mix(in srgb, var(--uv-accent) 52%, var(--uv-layer-2));
+  --uv-level-3: color-mix(in srgb, var(--uv-accent) 76%, var(--uv-layer-2));
+  --uv-level-4: var(--uv-accent);
 
   container-type: inline-size;
   display: flex;
@@ -35,6 +41,12 @@
 }
 .uv-small {
   font-size: var(--uv-small);
+}
+.uv-xsmall {
+  font-size: var(--uv-xsmall);
+}
+.uv-faint {
+  color: var(--uv-faint);
 }
 .uv-strong {
   font-weight: var(--font-weight-medium, 500);
@@ -68,6 +80,9 @@
   align-items: center;
   gap: 6px;
   padding: 10px 10px 8px 12px;
+}
+.uv-panel .uv-toolbar {
+  border-bottom: 1px solid var(--uv-border);
 }
 .uv-page .uv-toolbar {
   padding: 40px 0 12px;
@@ -116,8 +131,8 @@
 .uv-content {
   display: flex;
   flex-direction: column;
-  gap: 18px;
-  padding: 2px 12px 24px;
+  gap: 20px;
+  padding: 12px 12px 24px;
   transition: opacity 120ms ease;
 }
 .uv-page .uv-content {
@@ -134,6 +149,18 @@
   gap: 10px;
   padding: 48px 20px;
   text-align: center;
+}
+.uv-empty-short {
+  padding: 28px 12px;
+}
+/* A bordered surface for charts, matching the cards. */
+.uv-box {
+  position: relative;
+  box-sizing: border-box;
+  padding: 12px;
+  border: 1px solid var(--uv-border);
+  border-radius: calc(var(--uv-radius) + 2px);
+  background: var(--uv-layer);
 }
 .uv-error {
   color: var(--uv-danger);
@@ -207,8 +234,11 @@
   font-size: var(--uv-xsmall);
   font-variant-numeric: tabular-nums;
 }
-.uv-card-hero {
+.uv-card-hero,
+.uv-card-wide {
   grid-column: 1 / -1;
+}
+.uv-card-hero {
   background: color-mix(in srgb, var(--uv-accent) 7%, var(--uv-layer));
   border-color: color-mix(in srgb, var(--uv-accent) 22%, var(--uv-border));
 }
@@ -262,7 +292,8 @@
   .uv-cards {
     grid-template-columns: 1.4fr repeat(3, minmax(0, 1fr));
   }
-  .uv-card-hero {
+  .uv-card-hero,
+  .uv-card-wide {
     grid-column: auto;
   }
 }
@@ -388,11 +419,11 @@
   grid-template-columns: auto minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr) 16px;
   column-gap: 8px;
-  height: 144px;
+  height: 172px;
 }
 @container (min-width: 760px) {
   .uv-chart {
-    height: 184px;
+    height: 212px;
   }
 }
 .uv-ylabels {
@@ -481,6 +512,16 @@
 .uv-tip-left {
   transform: translate(calc(-100% - 12px), calc(-100% - 8px));
 }
+/* Centred above the point, or hugging it from one side near the edges. */
+.uv-tip-above {
+  transform: translate(-50%, calc(-100% - 8px));
+}
+.uv-tip-above.uv-tip-start {
+  transform: translate(-8px, calc(-100% - 8px));
+}
+.uv-tip-above.uv-tip-end {
+  transform: translate(calc(-100% + 8px), calc(-100% - 8px));
+}
 .uv-sr-only {
   position: absolute;
   width: 1px;
@@ -507,6 +548,75 @@
   flex-direction: column;
   gap: 2px;
   font-variant-numeric: tabular-nums;
+}
+
+/* heatmap -----------------------------------------------------------------------------------------------------------*/
+
+.uv-heatmap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.uv-heatmap-grid {
+  position: relative;
+}
+.uv-heatmap-svg {
+  display: block;
+  overflow: visible;
+}
+.uv-heatmap-label {
+  fill: var(--uv-faint);
+  font-size: 10px;
+}
+.uv-cell {
+  stroke: transparent;
+  stroke-width: 1;
+}
+.uv-cell:hover {
+  stroke: color-mix(in srgb, var(--uv-text) 40%, transparent);
+}
+.uv-level-0 {
+  fill: var(--uv-level-0);
+  background-color: var(--uv-level-0);
+}
+.uv-level-1 {
+  fill: var(--uv-level-1);
+  background-color: var(--uv-level-1);
+}
+.uv-level-2 {
+  fill: var(--uv-level-2);
+  background-color: var(--uv-level-2);
+}
+.uv-level-3 {
+  fill: var(--uv-level-3);
+  background-color: var(--uv-level-3);
+}
+.uv-level-4 {
+  fill: var(--uv-level-4);
+  background-color: var(--uv-level-4);
+}
+.uv-heatmap-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.uv-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--uv-faint);
+  font-size: var(--uv-xsmall);
+}
+.uv-legend > span:first-child {
+  margin-right: 2px;
+}
+.uv-legend > span:last-child {
+  margin-left: 2px;
+}
+.uv-legend-cell {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
 }
 
 /* sessions ----------------------------------------------------------------------------------------------------------*/

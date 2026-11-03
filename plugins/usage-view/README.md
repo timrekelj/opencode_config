@@ -30,6 +30,10 @@ access token, so don't poll it aggressively. API-key and proxy accounts report n
 - **Summary**: estimated API cost, actual billed cost, total tokens (input / output+reasoning / cache read / cache
   write), sessions / prompts / steps / subagents, active days and streak.
 - **Over time** line chart, by cost or tokens, with a tooltip on each point.
+- **Past year** heatmap, GitHub-style: one square per day, shaded by the chart's metric (cost or tokens) in
+  quartiles of the active days. It ignores the range but follows the scope, shows as many weeks as fit (up to 53),
+  and its header gives the year's estimated cost, active days and current streak. Hover a square for the day's
+  cost, tokens and steps. Deleted sessions count.
 - **By model**: steps, tokens, estimated cost and share.
 - **Tools**: calls, failure rate and median (p50) duration.
 - **Top sessions** active in the range, sorted by tokens. Click one to open it. These are lifetime totals for each
@@ -85,13 +89,16 @@ marked deleted and its usage is added to OpenCode's own stats for the same range
 
 ## Layout
 
-- `src/index.ts`: server part. Registers the `usage-view` RPC (`prices`, `retained`) and starts the ledger.
-- `src/ledger.ts`: the copy of each session's usage, so deleted sessions still count.
+- `src/index.ts`: server part. Registers the `usage-view` RPC (`prices`, `retained`, `daily`, `limits`) and starts
+  the ledger.
+- `src/ledger.ts`: the copy of each session's usage, so deleted sessions still count. Also answers `daily`: usage per
+  local day for the heatmap, read from the database in hour slots (live sessions) plus the ledger (deleted ones).
 - `src/pricing.ts`: models.dev fetch, cache and model matching.
 - `src/rpc.ts`: RPC definition, in portable JSON Schema.
 - `src/gui.tsx`: GUI entry. Registers the panel, menu item, command and settings page.
 - `src/gui/api.ts`: loads the data with `session.stats` (one call per chart bucket, in parallel), `session.list` and
-  the `prices` and `retained` RPCs, and adds the deleted sessions' usage to the stats.
+  the `prices` and `retained` RPCs, and adds the deleted sessions' usage to the stats. The heatmap loads separately
+  through the `daily` RPC, so changing the range does not refetch the year.
 - `src/gui/usage.tsx`: the view. `src/gui/format.ts` holds the number formatting. `src/gui/style.css` holds the styles.
 
 ## Development

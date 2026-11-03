@@ -87,6 +87,34 @@ export const UsageView = Rpc.define({
       },
       errors,
     },
+    daily: {
+      input: {
+        type: "object",
+        properties: { from: num, to: num, project: str, timezone: str },
+        required: ["from", "to"],
+      },
+      output: {
+        type: "object",
+        properties: {
+          days: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                date: str,
+                models: {
+                  type: "array",
+                  items: { type: "object", properties: { model: modelRef, steps: num, cost: num, tokens } },
+                },
+              },
+              required: ["date", "models"],
+            },
+          },
+        },
+        required: ["days"],
+      },
+      errors,
+    },
     limits: {
       input: {
         type: "object",

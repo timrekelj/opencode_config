@@ -1,6 +1,16 @@
 import type { Context } from "@opencode/plugin/gui"
 import { UsageView } from "../rpc"
-import { modelKey, type LimitsResult, type ModelKey, type Price, type PricesResult, type RetainedRange, type RetainedResult } from "../types"
+import {
+  modelKey,
+  type DailyResult,
+  type DailyUsage,
+  type LimitsResult,
+  type ModelKey,
+  type Price,
+  type PricesResult,
+  type RetainedRange,
+  type RetainedResult,
+} from "../types"
 import { totalTokens, type Tokens } from "./format"
 
 type Client = Context["client"]
@@ -48,8 +58,10 @@ const HOUR = 60 * 60 * 1000
 const DAY = 24 * HOUR
 const SESSION_PAGE = 200
 const SESSION_PAGES = 10
+/** The heatmap shows up to 53 weeks; a spare week covers the Sunday alignment of the first column. */
+export const ACTIVITY_DAYS = 54 * 7
 
-const timezone = () => {
+export const timezone = () => {
   try {
     return Intl.DateTimeFormat().resolvedOptions().timeZone
   } catch {
@@ -57,11 +69,11 @@ const timezone = () => {
   }
 }
 
-const startOfDay = (time: number) => {
+export const startOfDay = (time: number) => {
   const d = new Date(time)
   return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
 }
-const addDays = (time: number, days: number) => {
+export const addDays = (time: number, days: number) => {
   const d = new Date(time)
   return new Date(d.getFullYear(), d.getMonth(), d.getDate() + days, d.getHours()).getTime()
 }
@@ -147,7 +159,56 @@ async function listSessions(client: Client, project: string | undefined, from: n
 type UsageRpc = {
   prices(input: object, options: object): Promise<PricesResult>
   retained(input: object, options: object): Promise<RetainedResult>
+  daily(input: object, options: object): Promise<DailyResult>
   limits(input: object, options: object): Promise<LimitsResult>
+}
+
+export interface ActivityData {
+  from: number
+  to: number
+  /** Days with usage, keyed by local `YYYY-MM-DD`. */
+  days: Record<string, DailyUsage>
+  prices: Record<string, Price | null>
+  pricesError?: string
+}
+
+/** Usage per day over the past year, for the heatmap. Independent of the selected range. */
+export async function loadActivity(
+  ctx: Pick<Context, "client">,
+  input: { project?: string; directory?: string },
+  signal: AbortSignal,
+): Promise<ActivityData> {
+  const client = ctx.client
+  const now = Date.now()
+  const from = addDays(startOfDay(now), 1 - ACTIVITY_DAYS)
+  // The RPC is answered per location; without a session, borrow the directory of any recent one.
+  let directory = input.directory
+  if (!directory) {
+    const recent = await client.session.list({ limit: 1, order: "desc" }, { signal })
+    directory = recent.data[0]?.location.directory
+  }
+  const rpc = client.rpc(UsageView) as unknown as UsageRpc
+  const rpcOptions = directory ? { location: { directory }, signal } : { signal }
+
+  const result = await rpc.daily({ from, to: now, project: input.project, timezone: timezone() }, rpcOptions)
+  const days: Record<string, DailyUsage> = {}
+  const models = new Map<string, ModelKey>()
+  for (const day of result.days) {
+    days[day.date] = day
+    for (const m of day.models) models.set(modelKey(m.model), { providerID: m.model.providerID, id: m.model.id })
+  }
+
+  let prices: Record<string, Price | null> = {}
+  let pricesError: string | undefined
+  if (models.size > 0) {
+    try {
+      prices = (await rpc.prices({ models: [...models.values()] }, rpcOptions)).prices
+    } catch (error) {
+      if (signal.aborted) throw error
+      pricesError = errorMessage(error)
+    }
+  }
+  return { from, to: now, days, prices, pricesError }
 }
 
 /** Subscription limits from the providers (Claude Code, Codex), not from local history. */

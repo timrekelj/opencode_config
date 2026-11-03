@@ -48,6 +48,16 @@ export interface RetainedResult {
   ranges: RetainedRange[]
 }
 
+/** Usage on one local day, as `YYYY-MM-DD`, split by model. Live and deleted sessions both count. */
+export interface DailyUsage {
+  date: string
+  models: RetainedModel[]
+}
+
+export interface DailyResult {
+  days: DailyUsage[]
+}
+
 export const modelKey = (model: ModelKey) => `${model.providerID}/${model.id}`
 
 export interface LimitWindow {

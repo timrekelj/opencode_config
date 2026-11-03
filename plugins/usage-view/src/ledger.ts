@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs"
 import { homedir } from "node:os"
 import { isAbsolute, join } from "node:path"
-import type { RetainedModel, RetainedRange, RetainedResult, TokenTotals } from "./types"
+import type { DailyResult, RetainedModel, RetainedRange, RetainedResult, TokenTotals } from "./types"
 
 /** Usage is kept in quarter-hour slots so it lines up with local hours in every time zone. */
 const SLOT_MS = 15 * 60 * 1000
@@ -83,6 +83,29 @@ const isEntry = (value: unknown): value is Entry =>
   typeof (value as Entry).projectID === "string"
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error))
+
+/** Maps a time to its `YYYY-MM-DD` in the given zone (or the server's own when unknown), cached per slot. */
+function dayFormatter(timezone: string | undefined): (time: number) => string {
+  const options: Intl.DateTimeFormatOptions = { year: "numeric", month: "2-digit", day: "2-digit" }
+  let format: Intl.DateTimeFormat
+  try {
+    format = new Intl.DateTimeFormat("en-US", { ...options, timeZone: timezone })
+  } catch {
+    format = new Intl.DateTimeFormat("en-US", options)
+  }
+  const cache = new Map<number, string>()
+  return (time) => {
+    const slot = Math.floor(time / SLOT_MS) * SLOT_MS
+    let day = cache.get(slot)
+    if (day === undefined) {
+      const parts = format.formatToParts(new Date(slot))
+      const part = (type: string) => parts.find((p) => p.type === type)?.value ?? ""
+      day = `${part("year")}-${part("month")}-${part("day")}`
+      cache.set(slot, day)
+    }
+    return day
+  }
+}
 
 /**
  * Keeps a copy of every session's usage in plugin storage, so usage of deleted sessions still counts.
@@ -284,6 +307,78 @@ export class Ledger {
     return {
       earliest,
       ranges: ranges.map(({ byModel, ids: _ids, ...range }): RetainedRange => ({ ...range, models: [...byModel.values()] })),
+    }
+  }
+
+  /**
+   * Usage per local day in `[from, to)`, optionally limited to one project. Live sessions are read from OpenCode's
+   * database in hour slots; deleted ones come from the ledger. Days without usage are left out.
+   */
+  async daily(input: { from: number; to: number; project?: string; timezone?: string }): Promise<DailyResult> {
+    await this.sync()
+    const db = this.db
+    if (!db) throw new Error("OpenCode database is not open")
+    const dayOf = dayFormatter(input.timezone)
+    const days = new Map<string, Map<string, RetainedModel>>()
+    const add = (row: Row) => {
+      const date = dayOf(row[0])
+      let models = days.get(date)
+      if (!models) {
+        models = new Map()
+        days.set(date, models)
+      }
+      const key = `${row[1]}/${row[2]}`
+      let model = models.get(key)
+      if (!model) {
+        model = { model: { providerID: row[1], id: row[2] }, steps: 0, cost: 0, tokens: emptyTokens() }
+        models.set(key, model)
+      }
+      addRow(model, row)
+    }
+
+    const HOUR_MS = 60 * 60 * 1000
+    const rows = db.all(
+      `SELECT (m.time_created / ${HOUR_MS}) * ${HOUR_MS} AS slot,
+         json_extract(m.data, '$.model.providerID') AS provider,
+         json_extract(m.data, '$.model.id') AS model,
+         count(*) AS steps,
+         sum(coalesce(json_extract(m.data, '$.tokens.input'), 0)) AS input,
+         sum(coalesce(json_extract(m.data, '$.tokens.output'), 0)) AS output,
+         sum(coalesce(json_extract(m.data, '$.tokens.reasoning'), 0)) AS reasoning,
+         sum(coalesce(json_extract(m.data, '$.tokens.cache.read'), 0)) AS cache_read,
+         sum(coalesce(json_extract(m.data, '$.tokens.cache.write'), 0)) AS cache_write,
+         sum(coalesce(json_extract(m.data, '$.cost'), 0)) AS cost
+       FROM session_message m JOIN session_v2 s ON s.id = m.session_id
+       WHERE m.type = 'assistant'
+         AND json_extract(m.data, '$.tokens') IS NOT NULL
+         AND m.time_created >= ? AND m.time_created < ?
+         ${input.project ? "AND s.project_id = ?" : ""}
+       GROUP BY slot, provider, model`,
+      ...(input.project ? [input.from, input.to, input.project] : [input.from, input.to]),
+    )
+    for (const r of rows) {
+      if (typeof r.provider !== "string" || typeof r.model !== "string") continue
+      add([
+        Number(r.slot),
+        r.provider,
+        r.model,
+        Number(r.steps),
+        Number(r.input),
+        Number(r.output),
+        Number(r.reasoning),
+        Number(r.cache_read),
+        Number(r.cache_write),
+        Number(r.cost),
+      ])
+    }
+    for (const entry of this.deleted.values()) {
+      if (input.project && entry.projectID !== input.project) continue
+      for (const row of entry.rows) if (row[0] >= input.from && row[0] < input.to) add(row)
+    }
+    return {
+      days: [...days]
+        .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+        .map(([date, models]) => ({ date, models: [...models.values()] })),
     }
   }
 

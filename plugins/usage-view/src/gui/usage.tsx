@@ -1,7 +1,21 @@
 import { createLatest, type Context, type MountedSession } from "@opencode/plugin/gui"
-import { createMemo, createSignal, For, Show, type JSX } from "solid-js"
-import { modelKey, type Price } from "../types"
-import { errorMessage, loadUsage, RANGES, type Bucket, type RangeId, type Scope, type SessionInfo, type Stats, type UsageData } from "./api"
+import { createMemo, createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js"
+import { modelKey, type ModelKey, type Price } from "../types"
+import {
+  addDays,
+  errorMessage,
+  loadActivity,
+  loadUsage,
+  RANGES,
+  startOfDay,
+  type ActivityData,
+  type Bucket,
+  type RangeId,
+  type Scope,
+  type SessionInfo,
+  type Stats,
+  type UsageData,
+} from "./api"
 import { LimitsView } from "./limits"
 import {
   ago,
@@ -54,7 +68,7 @@ interface Costed {
   unknown: boolean
 }
 
-function costOf(models: Stats["models"], prices: Record<string, Price | null>): Costed {
+function costOf(models: { model: ModelKey; tokens: Tokens }[], prices: Record<string, Price | null>): Costed {
   let est = 0
   let savings = 0
   const parts = emptyParts()
@@ -137,6 +151,15 @@ export function UsageView(props: UsageViewProps) {
     },
   )
 
+  // The past-year heatmap does not depend on the range, so it only reloads with the scope or a refresh.
+  const activity = createLatest(
+    () => JSON.stringify({ project: scope() === "project" ? projectID() : undefined, directory: directory(), v: version() }),
+    (key, signal) => {
+      const { project, directory } = JSON.parse(key) as { project?: string; directory?: string }
+      return loadActivity(props.ctx, { project, directory }, signal)
+    },
+  )
+
   const data = () => usage.latest
   const prices = () => data()?.prices ?? {}
   const total = createMemo(() => {
@@ -194,7 +217,7 @@ export function UsageView(props: UsageViewProps) {
               label="Refresh"
               variant="ghost"
               size="small"
-              busy={usage.loading}
+              busy={usage.loading || activity.loading}
               onClick={() => setVersion((v) => v + 1)}
             />
           </ui.Tooltip>
@@ -243,6 +266,14 @@ export function UsageView(props: UsageViewProps) {
               </Show>
               <Summary data={d()} cost={total()!} />
               <Chart ui={ui} data={d()} prices={prices()} metric={props.prefs.metric} setMetric={(metric) => props.setPrefs({ metric })} />
+              <Heatmap
+                ui={ui}
+                data={activity.latest}
+                loading={activity.loading}
+                error={activity.error}
+                metric={props.prefs.metric}
+                retry={() => setVersion((v) => v + 1)}
+              />
               <div class="uv-columns">
                 <Models data={d()} cost={total()!} />
                 <Tools ui={ui} data={d()} showAll={showAllTools()} toggle={() => setShowAllTools((v) => !v)} />
@@ -307,6 +338,7 @@ function Summary(props: { data: UsageData; cost: Costed }) {
         }
       />
       <Card
+        class="uv-card-wide"
         label="Sessions"
         value={exact(t().sessions)}
         sub={
@@ -323,11 +355,6 @@ function Summary(props: { data: UsageData; cost: Costed }) {
             </Show>
           </span>
         }
-      />
-      <Card
-        label="Active days"
-        value={exact(t().activeDays)}
-        sub={<span>Streak {exact(t().streak)} {t().streak === 1 ? "day" : "days"}</span>}
       />
     </div>
   )
@@ -512,7 +539,7 @@ function Chart(props: {
           onChange={props.setMetric}
         />
       </div>
-      <div class="uv-chart">
+      <div class="uv-box uv-chart">
         <div class="uv-ylabels">
           <For each={grid()}>
             {(g) => (
@@ -595,6 +622,275 @@ function Chart(props: {
             )}
           </For>
         </div>
+      </div>
+    </section>
+  )
+}
+
+/* heatmap ----------------------------------------------------------------------------------------------------------*/
+
+const GAP = 3
+/** Cells are 10px like GitHub's, growing to 14px when the whole year fits with room to spare. */
+const STEP_MIN = 10 + GAP
+const STEP_MAX = 14 + GAP
+const MAX_WEEKS = 53
+const MIN_WEEKS = 8
+/** Room for the weekday labels on the left and the month labels on top. */
+const LABEL_W = 30
+const LABEL_H = 16
+
+const dayKey = (time: number) => {
+  const d = new Date(time)
+  const pad = (n: number) => String(n).padStart(2, "0")
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+/** Jan 7 2024 was a Sunday, so row 0 is Sunday like GitHub's graph. */
+const weekday = (row: number) => new Date(2024, 0, 7 + row).toLocaleDateString(undefined, { weekday: "short" })
+
+interface DayTotals {
+  est: number
+  unknown: boolean
+  tokens: number
+  steps: number
+}
+
+interface DayCell extends DayTotals {
+  time: number
+  col: number
+  row: number
+  value: number
+}
+
+function Heatmap(props: {
+  ui: Context["ui"]
+  data: ActivityData | undefined
+  loading: boolean
+  error: unknown
+  metric: Metric
+  retry: () => void
+}) {
+  let box!: HTMLDivElement
+  const [width, setWidth] = createSignal(0)
+  onMount(() => {
+    // The content width, inside the padding: measured now, then by the observer on every resize.
+    const style = getComputedStyle(box)
+    setWidth(Math.max(0, box.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)))
+    const observer = new ResizeObserver((entries) => setWidth(entries[0]?.contentRect.width ?? 0))
+    observer.observe(box)
+    onCleanup(() => observer.disconnect())
+  })
+  const step = createMemo(() => Math.max(STEP_MIN, Math.min(STEP_MAX, Math.floor((width() - LABEL_W + GAP) / MAX_WEEKS))))
+  const cell = () => step() - GAP
+  /** As many whole weeks as fit, so the panel shows the last months and the page the whole year. */
+  const weeks = createMemo(() => Math.max(MIN_WEEKS, Math.min(MAX_WEEKS, Math.floor((width() - LABEL_W + GAP) / step()))))
+  const today = () => startOfDay(props.data?.to ?? Date.now())
+
+  const totals = createMemo(() => {
+    const d = props.data
+    const out = new Map<string, DayTotals>()
+    if (!d) return out
+    for (const [key, day] of Object.entries(d.days)) {
+      const cost = costOf(day.models, d.prices)
+      out.set(key, {
+        est: cost.est,
+        unknown: cost.unknown,
+        tokens: day.models.reduce((n, m) => n + totalTokens(m.tokens), 0),
+        steps: day.models.reduce((n, m) => n + m.steps, 0),
+      })
+    }
+    return out
+  })
+  /** Totals over the whole fetched year, not just the weeks on screen. */
+  const year = createMemo(() => {
+    const d = props.data
+    if (!d) return undefined
+    const cost = costOf(
+      Object.values(d.days).flatMap((day) => day.models),
+      d.prices,
+    )
+    const active = [...totals().values()].filter((t) => t.steps > 0).length
+    // The streak may still be alive when today has no usage yet.
+    let cursor = today()
+    if (!totals().get(dayKey(cursor))?.steps) cursor = addDays(cursor, -1)
+    let streak = 0
+    while (totals().get(dayKey(cursor))?.steps) {
+      streak++
+      cursor = addDays(cursor, -1)
+    }
+    return { cost, active, streak }
+  })
+
+  const grid = createMemo(() => {
+    const n = weeks()
+    const end = today()
+    const first = addDays(end, -((n - 1) * 7 + new Date(end).getDay()))
+    const days: DayCell[] = []
+    for (let col = 0; col < n; col++) {
+      for (let row = 0; row < 7; row++) {
+        const time = addDays(first, col * 7 + row)
+        if (time > end) break
+        const t = totals().get(dayKey(time))
+        days.push({
+          time,
+          col,
+          row,
+          est: t?.est ?? 0,
+          unknown: t?.unknown ?? false,
+          tokens: t?.tokens ?? 0,
+          steps: t?.steps ?? 0,
+          value: props.metric === "cost" ? (t?.est ?? 0) : (t?.tokens ?? 0),
+        })
+      }
+    }
+    // A month label where a column starts a new month; the first goes if the next is right behind it.
+    const months: { col: number; label: string }[] = []
+    for (let col = 0; col < n - 1; col++) {
+      const start = new Date(addDays(first, col * 7))
+      const previous = col > 0 ? new Date(addDays(first, (col - 1) * 7)).getMonth() : -1
+      if (start.getMonth() !== previous) months.push({ col, label: start.toLocaleDateString(undefined, { month: "short" }) })
+    }
+    if (months.length > 1 && months[1]!.col - months[0]!.col < 3) months.shift()
+    return { days, months }
+  })
+  /** Quartiles of the active days, so one huge day does not flatten the rest. */
+  const thresholds = createMemo(() => {
+    const values = grid()
+      .days.map((d) => d.value)
+      .filter((v) => v > 0)
+      .sort((a, b) => a - b)
+    if (values.length === 0) return undefined
+    const q = (p: number) => values[Math.min(values.length - 1, Math.floor(p * values.length))]!
+    return [q(0.25), q(0.5), q(0.75)] as const
+  })
+  const level = (value: number) => {
+    const t = thresholds()
+    if (value <= 0 || !t) return 0
+    return value < t[0] ? 1 : value < t[1] ? 2 : value < t[2] ? 3 : 4
+  }
+
+  // Keyed by day, not cell, so a rebuilt grid (resize, new data) cannot leave the tooltip on a stale cell.
+  const [hoveredDay, setHoveredDay] = createSignal<number | null>(null)
+  const hovered = createMemo(() => {
+    const time = hoveredDay()
+    return time === null ? undefined : grid().days.find((d) => d.time === time)
+  })
+  const setHovered = (day: DayCell | null) => setHoveredDay(day ? day.time : null)
+  const svgWidth = () => LABEL_W + weeks() * step() - GAP
+  const svgHeight = () => LABEL_H + 7 * step() - GAP
+  const x = (col: number) => LABEL_W + col * step()
+  const y = (row: number) => LABEL_H + row * step()
+  const tipAlign = (cell: DayCell) => (x(cell.col) < 90 ? "uv-tip-start" : x(cell.col) > svgWidth() - 90 ? "uv-tip-end" : "")
+  const date = (cell: DayCell) =>
+    new Date(cell.time).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric" })
+  const plural = (n: number, word: string) => `${exact(n)} ${word}${n === 1 ? "" : "s"}`
+
+  return (
+    <section class="uv-section">
+      <div class="uv-section-head">
+        <span class="uv-section-title">Past year</span>
+        <Show when={year()}>
+          {(y) => (
+            <span class="uv-muted uv-small">
+              <Show when={y().active > 0} fallback="no usage yet">
+                {costLabel(y().cost)} est. · {plural(y().active, "active day")}
+                <Show when={y().streak > 0}> · {exact(y().streak)}-day streak</Show>
+              </Show>
+            </span>
+          )}
+        </Show>
+      </div>
+      <div ref={box} classList={{ "uv-box": true, "uv-heatmap": true, "uv-stale": props.loading }}>
+        <Show when={props.error}>
+          {(error) => (
+            <div class="uv-empty uv-empty-short uv-error">
+              <span>{errorMessage(error())}</span>
+              <props.ui.Button size="small" variant="ghost" onClick={props.retry}>
+                Try again
+              </props.ui.Button>
+            </div>
+          )}
+        </Show>
+        <Show when={!props.error && !props.data}>
+          <div class="uv-empty uv-empty-short">
+            <props.ui.Loader />
+          </div>
+        </Show>
+        <Show when={!props.error && props.data}>
+          {(d) => (
+            <>
+              <Show when={d().pricesError}>
+                {(message) => (
+                  <div class="uv-notice uv-notice-warning">
+                    <props.ui.Icon name="warning" size="small" />
+                    <span>Prices unavailable: {message()}</span>
+                  </div>
+                )}
+              </Show>
+              <div class="uv-heatmap-grid">
+                <svg
+                  class="uv-heatmap-svg"
+                  width={svgWidth()}
+                  height={svgHeight()}
+                  role="img"
+                  aria-label={`${props.metric === "cost" ? "Estimated cost" : "Tokens"} per day over the last ${weeks()} weeks`}
+                >
+                  <For each={grid().months}>
+                    {(m) => (
+                      <text class="uv-heatmap-label" x={x(m.col)} y={10}>
+                        {m.label}
+                      </text>
+                    )}
+                  </For>
+                  <For each={[1, 3, 5]}>
+                    {(row) => (
+                      <text class="uv-heatmap-label" x={0} y={y(row) + cell() - 1}>
+                        {weekday(row)}
+                      </text>
+                    )}
+                  </For>
+                  <For each={grid().days}>
+                    {(day) => (
+                      <rect
+                        class={`uv-cell uv-level-${level(day.value)}`}
+                        x={x(day.col)}
+                        y={y(day.row)}
+                        width={cell()}
+                        height={cell()}
+                        rx={2}
+                        onPointerEnter={() => setHovered(day)}
+                        onPointerLeave={() => setHovered(null)}
+                      />
+                    )}
+                  </For>
+                </svg>
+                <Show when={hovered()}>
+                  {(day) => (
+                    <span
+                      class={`uv-tip uv-tip-float uv-tip-above ${tipAlign(day())}`}
+                      style={{ left: `${x(day().col) + cell() / 2}px`, top: `${y(day().row)}px` }}
+                    >
+                      <strong>{date(day())}</strong>
+                      <Show when={day().steps > 0} fallback={<span>No usage</span>}>
+                        <span>
+                          {day().unknown ? "—" : dollars(day().est)} est. · {tokens(day().tokens)} tokens · {plural(day().steps, "step")}
+                        </span>
+                      </Show>
+                    </span>
+                  )}
+                </Show>
+              </div>
+              <div class="uv-heatmap-foot">
+                <span class="uv-faint uv-xsmall">{props.metric === "cost" ? "est. cost" : "tokens"} per day</span>
+                <span class="uv-spacer" />
+                <span class="uv-legend" aria-hidden="true">
+                  <span>Less</span>
+                  <For each={[0, 1, 2, 3, 4]}>{(n) => <span class={`uv-legend-cell uv-level-${n}`} />}</For>
+                  <span>More</span>
+                </span>
+              </div>
+            </>
+          )}
+        </Show>
       </div>
     </section>
   )
