@@ -1,5 +1,5 @@
 import type { Context, SessionRef } from "@opencode/plugin/gui"
-import type { DraftComment } from "../types"
+import type { CurrentPr, DraftComment } from "../types"
 import type { Api, GitApi } from "./api"
 
 export const LIST_TAB = "list"
@@ -20,6 +20,8 @@ export interface App {
   openList(session: SessionRef): void
   openBranches(session: SessionRef): void
   openPr(session: SessionRef, number: number): void
+  /** The pull request for the directory's checked-out branch; undefined until known, null when there is none. */
+  currentPr(directory: string): CurrentPr | null | undefined
   /** Reactive tick the composer pill reads; bump it after branch actions. */
   branchTick: () => number
   bumpBranch(): void

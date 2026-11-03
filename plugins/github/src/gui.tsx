@@ -72,6 +72,7 @@ export default Plugin.define({
       openList: (session) => ctx.layout.open(listKey, session, { tab: "select" }),
       openBranches: (session) => ctx.layout.open(branchesKey, session, { tab: "select" }),
       openPr: (session, number) => ctx.layout.open(`${ctx.id}:${prTabId(number)}`, session, { tab: "select" }),
+      currentPr: (directory) => current[directory],
       branchTick,
       bumpBranch: () => setBranchTick((v) => v + 1),
     }
@@ -112,7 +113,7 @@ export default Plugin.define({
             : {
               id,
               title: `#${number}`,
-              closable: "hover",
+              closable: "compact",
               label: (state) => (
                 <span class="prr-tab-label" title={titles[prKey(state.session.directory, number)]}>
                   <ctx.ui.Icon name="github" size="small" />

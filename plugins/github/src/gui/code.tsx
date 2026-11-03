@@ -4,7 +4,7 @@ import { createStore } from "solid-js/store"
 import type { DraftComment, PrDetail, PrFile, ReviewComment, ReviewEvent, Side } from "../types"
 import { ErrorState, showErrorToast, StaleBanner } from "./errors"
 import { prKey, type App } from "./app"
-import { ago, lineNumber, lineSide, parsePatch, type DiffLine } from "./util"
+import { ago, lineNumber, lineSide, parsePatch, plural, splitPath, type DiffLine } from "./util"
 
 interface Selection {
   path: string
@@ -13,13 +13,18 @@ interface Selection {
   end: number
 }
 
-const STATUS: Record<string, { letter: string; tone: string }> = {
-  added: { letter: "A", tone: "add" },
-  removed: { letter: "D", tone: "del" },
-  modified: { letter: "M", tone: "mod" },
-  renamed: { letter: "R", tone: "mod" },
-  copied: { letter: "C", tone: "mod" },
-  changed: { letter: "M", tone: "mod" },
+interface Thread {
+  root: ReviewComment
+  replies: ReviewComment[]
+}
+
+const STATUS: Record<string, { letter: string; tone: string; label: string }> = {
+  added: { letter: "A", tone: "add", label: "Added" },
+  removed: { letter: "D", tone: "del", label: "Deleted" },
+  modified: { letter: "M", tone: "mod", label: "Modified" },
+  renamed: { letter: "R", tone: "mod", label: "Renamed" },
+  copied: { letter: "C", tone: "mod", label: "Copied" },
+  changed: { letter: "M", tone: "mod", label: "Changed" },
 }
 
 export function CodeTab(props: {
@@ -37,6 +42,7 @@ export function CodeTab(props: {
   const key = () => prKey(dir(), props.pr.number)
 
   const [local, setLocal] = createSignal(0)
+  const reload = () => setLocal((v) => v + 1)
   const data = createLatest(
     () => `${dir()}\n${props.pr.number}\n${props.version}\n${local()}`,
     (k) => {
@@ -54,6 +60,7 @@ export function CodeTab(props: {
   const isViewed = (file: PrFile) => viewed[file.path] ?? file.viewed === "VIEWED"
   const isCollapsed = (file: PrFile) => collapsed[file.path] ?? isViewed(file)
   const viewedCount = () => files().filter(isViewed).length
+  const allCollapsed = () => files().length > 0 && files().every(isCollapsed)
   const drafts = () => app.drafts[key()] ?? []
 
   const shown = createMemo(() => {
@@ -61,12 +68,14 @@ export function CodeTab(props: {
     return q ? files().filter((f) => f.path.toLowerCase().includes(q)) : files()
   })
 
-  const comments = createMemo(() => {
-    const byPath = new Map<string, ReviewComment[]>()
-    for (const comment of data.latest?.comments ?? []) {
-      const list = byPath.get(comment.path) ?? []
-      list.push(comment)
-      byPath.set(comment.path, list)
+  const threads = createMemo(() => {
+    const comments = data.latest?.comments ?? []
+    const byPath = new Map<string, Thread[]>()
+    for (const root of comments) {
+      if (root.replyTo !== null) continue
+      const list = byPath.get(root.path) ?? []
+      list.push({ root, replies: comments.filter((c) => c.replyTo === root.id) })
+      byPath.set(root.path, list)
     }
     return byPath
   })
@@ -79,6 +88,7 @@ export function CodeTab(props: {
       await app.api.setViewed(dir(), props.pr.number, file.path, next)
     } catch (error) {
       setViewed(file.path, !next)
+      setCollapsed(file.path, !next)
       showErrorToast(ctx, "Marking as viewed", error, dir())
     }
   }
@@ -89,7 +99,7 @@ export function CodeTab(props: {
     const side = lineSide(line)
     const current = selection()
     if (extend && current && current.path === path && current.side === side) {
-      setSelection({ path, side, start: Math.min(current.start, n), end: Math.max(current.start, n) })
+      setSelection({ path, side, start: Math.min(current.start, n), end: Math.max(current.end, n) })
       return
     }
     setSelection({ path, side, start: n, end: n })
@@ -111,9 +121,9 @@ export function CodeTab(props: {
   }
 
   const askAgent = (sel: Selection, file: PrFile, body: string) => {
-    const composer = ctx.screen.current()?.composer
-    if (!composer?.quotable()) {
-      ctx.toast.show({ title: "The chat composer is not available here." })
+    const composer = props.screen.composer
+    if (!composer.quotable()) {
+      ctx.toast.show({ title: "The chat composer isn't available here." })
       return
     }
     const lines = parsePatch(file.patch ?? "").filter((l) => {
@@ -128,7 +138,7 @@ export function CodeTab(props: {
       text: lines.map((l) => `${l.kind === "add" ? "+" : l.kind === "del" ? "-" : " "}${l.text}`).join("\n"),
       comment: body.trim() || undefined,
       source: {
-        label: `#${props.pr.number} ${file.path.split("/").pop()}:${sel.start === sel.end ? sel.end : `${sel.start}-${sel.end}`}`,
+        label: `#${props.pr.number} ${splitPath(file.path)[1]}:${sel.start === sel.end ? sel.end : `${sel.start}-${sel.end}`}`,
         icon: "github",
         subject: `the diff of ${file.path} (${range}, ${sel.side === "LEFT" ? "old" : "new"} side) in pull request #${props.pr.number} "${props.pr.title}"`,
       },
@@ -137,10 +147,10 @@ export function CodeTab(props: {
     setSelection(undefined)
   }
 
-  const reply = async (comment: ReviewComment, body: string) => {
+  const reply = async (thread: Thread, body: string) => {
     try {
-      await app.api.reply(dir(), props.pr.number, comment.replyTo ?? comment.id, body)
-      setLocal((v) => v + 1)
+      await app.api.reply(dir(), props.pr.number, thread.root.id, body)
+      reload()
       return true
     } catch (error) {
       showErrorToast(ctx, "Reply", error, dir())
@@ -155,7 +165,7 @@ export function CodeTab(props: {
       directory: dir(),
       onDone: () => {
         app.updateDrafts(key(), () => [])
-        setLocal((v) => v + 1)
+        reload()
         props.onSubmitted()
       },
     })
@@ -163,53 +173,54 @@ export function CodeTab(props: {
   return (
     <div class="prr-code">
       <div class="prr-code-toolbar">
-        <span class="prr-progress" title="Files marked as viewed (synced with GitHub)">
-          <ui.Icon name="eye" size="small" />
-          {viewedCount()}/{files().length} viewed
-        </span>
-        <div class="prr-code-filter">
+        <div class="prr-progress" title="Files you marked as viewed, synced with GitHub">
+          <span class="prr-progress-text">
+            {viewedCount()} / {files().length} viewed
+          </span>
+          <span class="prr-progress-bar">
+            <span
+              class="prr-progress-fill"
+              style={{ width: `${files().length ? (viewedCount() / files().length) * 100 : 0}%` }}
+            />
+          </span>
+        </div>
+        <div class="prr-grow">
           <ui.TextInput label="Filter files" placeholder="Filter files" type="search" value={filter()} onInput={setFilter} />
         </div>
-        <ui.Tooltip value="Collapse all">
+        <ui.Tooltip value={allCollapsed() ? "Expand all" : "Collapse all"}>
           <ui.IconButton
-            icon="collapse"
-            label="Collapse all"
+            icon={allCollapsed() ? "expand" : "collapse"}
+            label={allCollapsed() ? "Expand all" : "Collapse all"}
             variant="ghost"
             size="small"
-            onClick={() => files().forEach((f) => setCollapsed(f.path, true))}
+            onClick={() => {
+              const next = !allCollapsed()
+              files().forEach((f) => setCollapsed(f.path, next))
+            }}
           />
         </ui.Tooltip>
-        <ui.Tooltip value="Expand all">
-          <ui.IconButton
-            icon="expand"
-            label="Expand all"
-            variant="ghost"
-            size="small"
-            onClick={() => files().forEach((f) => setCollapsed(f.path, false))}
-          />
-        </ui.Tooltip>
-        <ui.Button size="small" variant="contrast" icon="review" onClick={submit} disabled={props.pr.state !== "OPEN"}>
-          {drafts().length ? `Review (${drafts().length})` : "Review"}
-        </ui.Button>
+        <Show when={props.pr.state === "OPEN"}>
+          <ui.Button size="small" variant="contrast" icon="review" onClick={submit}>
+            {drafts().length ? `Submit review (${drafts().length})` : "Review"}
+          </ui.Button>
+        </Show>
       </div>
 
-      <div class="prr-scroll">
+      <Show when={data.error && data.latest}>
+        <StaleBanner ctx={ctx} error={data.error} directory={dir()} onRetry={reload} />
+      </Show>
+
+      <div class="prr-scroll prr-files">
         <Show when={data.error && !data.latest}>
-          <ErrorState
-            ctx={ctx}
-            error={data.error}
-            directory={dir()}
-            onRetry={() => setLocal((v) => v + 1)}
-            retrying={data.loading}
-          />
-        </Show>
-        <Show when={data.error && data.latest}>
-          <StaleBanner ctx={ctx} error={data.error} directory={dir()} onRetry={() => setLocal((v) => v + 1)} />
+          <ErrorState ctx={ctx} error={data.error} directory={dir()} onRetry={reload} retrying={data.loading} />
         </Show>
         <Show when={!data.latest && !data.error}>
           <div class="prr-empty">
             <ui.Loader />
           </div>
+        </Show>
+        <Show when={data.latest && shown().length === 0}>
+          <div class="prr-empty prr-muted">{filter() ? "No files match the filter." : "No files changed."}</div>
         </Show>
         <For each={shown()}>
           {(file) => (
@@ -219,9 +230,10 @@ export function CodeTab(props: {
               file={file}
               viewed={isViewed(file)}
               collapsed={isCollapsed(file)}
-              comments={comments().get(file.path) ?? []}
+              threads={threads().get(file.path) ?? []}
               drafts={drafts().filter((d) => d.path === file.path)}
               selection={selection()?.path === file.path ? selection() : undefined}
+              prUrl={props.pr.url}
               onToggleViewed={() => void toggleViewed(file)}
               onToggleCollapsed={() => setCollapsed(file.path, !isCollapsed(file))}
               onSelect={(line, extend) => select(file.path, line, extend)}
@@ -230,7 +242,6 @@ export function CodeTab(props: {
               onAsk={(sel, body) => askAgent(sel, file, body)}
               onRemoveDraft={(id) => app.updateDrafts(key(), (list) => list.filter((d) => d.id !== id))}
               onReply={reply}
-              prUrl={props.pr.url}
             />
           )}
         </For>
@@ -245,7 +256,7 @@ function FileDiff(props: {
   file: PrFile
   viewed: boolean
   collapsed: boolean
-  comments: ReviewComment[]
+  threads: Thread[]
   drafts: DraftComment[]
   selection: Selection | undefined
   prUrl: string
@@ -256,27 +267,25 @@ function FileDiff(props: {
   onDraft: (sel: Selection, body: string) => void
   onAsk: (sel: Selection, body: string) => void
   onRemoveDraft: (id: string) => void
-  onReply: (comment: ReviewComment, body: string) => Promise<boolean>
+  onReply: (thread: Thread, body: string) => Promise<boolean>
 }) {
   const ctx = props.app.ctx
   const ui = ctx.ui
   const lines = createMemo(() => (props.file.patch ? parsePatch(props.file.patch) : []))
-  const status = () => STATUS[props.file.status] ?? { letter: "M", tone: "mod" }
-
-  const threads = createMemo(() => {
-    const roots = props.comments.filter((c) => c.replyTo === null && c.line !== null)
-    return roots.map((root) => ({ root, replies: props.comments.filter((c) => c.replyTo === root.id) }))
-  })
+  const status = () => STATUS[props.file.status] ?? STATUS.modified
+  const path = () => splitPath(props.file.path)
+  const commentCount = () => props.threads.reduce((n, t) => n + 1 + t.replies.length, 0)
+  const current = () => props.threads.filter((t) => t.root.line !== null)
+  const outdated = () => props.threads.filter((t) => t.root.line === null)
 
   const at = (line: DiffLine) => {
     const n = lineNumber(line)
-    const side = lineSide(line)
     if (n === undefined || line.kind === "hunk" || line.kind === "note") return undefined
-    return { n, side }
+    return { n, side: lineSide(line) }
   }
   const threadsAt = (line: DiffLine) => {
     const pos = at(line)
-    return pos ? threads().filter((t) => t.root.side === pos.side && t.root.line === pos.n) : []
+    return pos ? current().filter((t) => t.root.side === pos.side && t.root.line === pos.n) : []
   }
   const draftsAt = (line: DiffLine) => {
     const pos = at(line)
@@ -293,31 +302,40 @@ function FileDiff(props: {
     return !!pos && !!sel && sel.side === pos.side && sel.end === pos.n
   }
 
-  const outdated = () => props.comments.filter((c) => c.replyTo === null && c.line === null).length
-
   return (
     <section class="prr-file" classList={{ "prr-file-viewed": props.viewed }}>
       <header class="prr-file-header">
-        <button type="button" class="prr-file-toggle" onClick={props.onToggleCollapsed}>
+        <button
+          type="button"
+          class="prr-file-toggle"
+          aria-expanded={!props.collapsed}
+          title={props.file.previous ? `${props.file.previous} → ${props.file.path}` : props.file.path}
+          onClick={props.onToggleCollapsed}
+        >
           <ui.Icon name={props.collapsed ? "chevron-right" : "chevron-down"} size="small" />
-          <span class={`prr-file-status prr-file-status-${status().tone}`}>{status().letter}</span>
-          <span class="prr-file-path prr-mono" title={props.file.path}>
+          <span class={`prr-file-status prr-file-status-${status().tone}`} title={status().label}>
+            {status().letter}
+          </span>
+          <span class="prr-file-path">
+            <span class="prr-file-dir">{path()[0]}</span>
+            <span class="prr-file-name">{path()[1]}</span>
             <Show when={props.file.previous}>
-              <span class="prr-muted">{props.file.previous} → </span>
+              {(previous) => <span class="prr-file-from">from {previous()}</span>}
             </Show>
-            {props.file.path}
           </span>
         </button>
-        <span class="prr-file-stats">
-          <Show when={props.comments.length > 0}>
-            <span class="prr-inline prr-muted" title="Review comments">
-              <ui.Icon name="comment" size="small" />
-              {props.comments.length}
-            </span>
-          </Show>
-          <span class="prr-add">+{props.file.additions}</span>
-          <span class="prr-del">−{props.file.deletions}</span>
-        </span>
+        <Show when={commentCount() > 0}>
+          <span class="prr-inline prr-muted prr-file-comments" title={plural(commentCount(), "comment")}>
+            <ui.Icon name="comment" size="small" />
+            {commentCount()}
+          </span>
+        </Show>
+        <Show when={props.file.additions || props.file.deletions}>
+          <span class="prr-diffstat">
+            <span class="prr-add">+{props.file.additions}</span>
+            <span class="prr-del">−{props.file.deletions}</span>
+          </span>
+        </Show>
         <ui.Tooltip value="Open file">
           <ui.IconButton
             icon="open-file"
@@ -328,36 +346,56 @@ function FileDiff(props: {
             onClick={() => ctx.links.open({ href: props.file.path, exact: true, session: props.session })}
           />
         </ui.Tooltip>
-        <label class="prr-viewed" title="Mark as viewed">
+        <label class="prr-viewed" classList={{ "prr-viewed-on": props.viewed }} title="Mark as viewed">
           <input type="checkbox" checked={props.viewed} onChange={props.onToggleViewed} />
-          <span>Viewed</span>
+          <span class="prr-viewed-box">
+            <Show when={props.viewed}>
+              <ui.Icon name="check-small" size="small" />
+            </Show>
+          </span>
+          Viewed
         </label>
       </header>
 
       <Show when={!props.collapsed}>
+        <Show when={outdated().length > 0}>
+          <div class="prr-outdated">
+            <For each={outdated()}>
+              {(thread) => (
+                <ThreadCard
+                  app={props.app}
+                  thread={thread}
+                  outdated
+                  onReply={(body) => props.onReply(thread, body)}
+                />
+              )}
+            </For>
+          </div>
+        </Show>
         <Show
           when={props.file.patch}
           fallback={
-            <div class="prr-file-empty prr-muted">
-              Diff not available (binary or too large).{" "}
-              <a href="#" onClick={(e) => (e.preventDefault(), ctx.system.openExternal(`${props.prUrl}/files`))}>
+            <div class="prr-file-note prr-muted">
+              {props.file.status === "renamed" && !props.file.additions && !props.file.deletions
+                ? "File renamed without changes."
+                : "No diff to show (binary or too large)."}{" "}
+              <button
+                type="button"
+                class="prr-link"
+                onClick={() => ctx.system.openExternal(`${props.prUrl}/files`)}
+              >
                 View on GitHub
-              </a>
+              </button>
             </div>
           }
         >
-          <Show when={outdated() > 0}>
-            <div class="prr-file-empty prr-muted">
-              {outdated()} outdated comment{outdated() === 1 ? "" : "s"} on this file are only visible on GitHub.
-            </div>
-          </Show>
-          <div class="prr-diff" role="table">
+          <div class="prr-diff">
             <Index each={lines()}>
               {(line) => (
                 <>
                   <Show
                     when={line().kind !== "hunk"}
-                    fallback={<div class="prr-diff-hunk prr-mono">{line().text}</div>}
+                    fallback={<div class="prr-diff-hunk">{line().text}</div>}
                   >
                     <div
                       class={`prr-diff-line prr-diff-${line().kind}`}
@@ -365,43 +403,52 @@ function FileDiff(props: {
                     >
                       <span class="prr-diff-num">{line().old ?? ""}</span>
                       <span class="prr-diff-num">{line().new ?? ""}</span>
-                      <button
-                        type="button"
-                        class="prr-diff-add-comment"
-                        title="Comment on this line (shift-click to select a range)"
-                        onClick={(e) => props.onSelect(line(), e.shiftKey)}
-                      >
-                        +
-                      </button>
-                      <span class="prr-diff-code prr-mono">
+                      <span class="prr-diff-gutter">
+                        <Show when={line().kind !== "note"}>
+                          <button
+                            type="button"
+                            class="prr-diff-plus"
+                            aria-label="Comment on this line"
+                            title="Comment on this line (shift-click to extend the range)"
+                            onClick={(e) => props.onSelect(line(), e.shiftKey)}
+                          >
+                            <ui.Icon name="plus-small" size="small" />
+                          </button>
+                        </Show>
+                      </span>
+                      <span class="prr-diff-code">
                         <span class="prr-diff-marker">
-                          {line().kind === "add" ? "+" : line().kind === "del" ? "-" : " "}
+                          {line().kind === "add" ? "+" : line().kind === "del" ? "−" : ""}
                         </span>
                         {line().text}
                       </span>
                     </div>
                   </Show>
                   <For each={threadsAt(line())}>
-                    {(thread) => <Thread app={props.app} root={thread.root} replies={thread.replies} onReply={props.onReply} />}
+                    {(thread) => (
+                      <ThreadCard app={props.app} thread={thread} onReply={(body) => props.onReply(thread, body)} />
+                    )}
                   </For>
                   <For each={draftsAt(line())}>
                     {(draft) => (
                       <div class="prr-inline-card prr-draft">
-                        <div class="prr-event-head">
-                          <span class="prr-pill prr-state-draft">Pending</span>
+                        <div class="prr-inline-head">
+                          <span class="prr-chip">Pending</span>
                           <Show when={draft.startLine}>
                             <span class="prr-muted">
-                              lines {draft.startLine}–{draft.line}
+                              Lines {draft.startLine}–{draft.line}
                             </span>
                           </Show>
                           <span class="prr-spacer" />
-                          <ui.IconButton
-                            icon="trash"
-                            label="Delete pending comment"
-                            variant="ghost"
-                            size="small"
-                            onClick={() => props.onRemoveDraft(draft.id)}
-                          />
+                          <ui.Tooltip value="Delete pending comment">
+                            <ui.IconButton
+                              icon="trash"
+                              label="Delete pending comment"
+                              variant="ghost"
+                              size="small"
+                              onClick={() => props.onRemoveDraft(draft.id)}
+                            />
+                          </ui.Tooltip>
                         </div>
                         <ui.Markdown text={draft.body} class="prr-markdown" />
                       </div>
@@ -444,10 +491,13 @@ function LineEditor(props: {
 
   return (
     <div class="prr-inline-card prr-editor">
-      <div class="prr-muted prr-editor-label">Comment on {range()}</div>
+      <div class="prr-inline-head prr-muted">
+        Comment on {range()}
+        <Show when={props.selection.side === "LEFT"}> (old version)</Show>
+      </div>
       <textarea
         class="prr-textarea"
-        placeholder="Leave a review comment, or ask the agent about these lines"
+        placeholder="Write a review comment, or a question for the agent"
         value={body()}
         ref={(el) => queueMicrotask(() => el.focus())}
         onInput={(e) => setBody(e.currentTarget.value)}
@@ -457,11 +507,12 @@ function LineEditor(props: {
         }}
       />
       <div class="prr-compose-actions">
+        <ui.Button size="small" variant="ghost" icon="prompt" onClick={() => props.onAsk(body())}>
+          Ask agent
+        </ui.Button>
+        <span class="prr-spacer" />
         <ui.Button size="small" variant="ghost" onClick={props.onCancel}>
           Cancel
-        </ui.Button>
-        <ui.Button size="small" icon="prompt" onClick={() => props.onAsk(body())}>
-          Ask agent
         </ui.Button>
         <ui.Button size="small" variant="contrast" disabled={!body().trim()} onClick={() => props.onDraft(body())}>
           Add to review
@@ -471,21 +522,16 @@ function LineEditor(props: {
   )
 }
 
-function Thread(props: {
-  app: App
-  root: ReviewComment
-  replies: ReviewComment[]
-  onReply: (comment: ReviewComment, body: string) => Promise<boolean>
-}) {
+function ThreadCard(props: { app: App; thread: Thread; outdated?: boolean; onReply: (body: string) => Promise<boolean> }) {
   const ui = props.app.ctx.ui
   const [replying, setReplying] = createSignal(false)
   const [body, setBody] = createSignal("")
   const [sending, setSending] = createSignal(false)
 
   const send = async () => {
-    if (!body().trim()) return
+    if (!body().trim() || sending()) return
     setSending(true)
-    const ok = await props.onReply(props.root, body())
+    const ok = await props.onReply(body())
     setSending(false)
     if (ok) {
       setBody("")
@@ -495,20 +541,30 @@ function Thread(props: {
 
   return (
     <div class="prr-inline-card prr-thread">
-      <For each={[props.root, ...props.replies]}>
+      <Show when={props.outdated}>
+        <div class="prr-inline-head">
+          <span class="prr-chip prr-chip-warning">Outdated</span>
+          <Show when={props.thread.root.originalLine}>
+            {(line) => <span class="prr-muted">Was on line {line()}</span>}
+          </Show>
+        </div>
+      </Show>
+      <For each={[props.thread.root, ...props.thread.replies]}>
         {(comment) => (
           <div class="prr-thread-comment">
-            <div class="prr-event-head">
+            <div class="prr-inline-head">
               <span class="prr-strong">{comment.author}</span>
               <span class="prr-muted">{ago(comment.createdAt)}</span>
               <span class="prr-spacer" />
-              <ui.IconButton
-                icon="square-arrow-top-right"
-                label="Open on GitHub"
-                variant="ghost"
-                size="small"
-                onClick={() => props.app.ctx.system.openExternal(comment.url)}
-              />
+              <ui.Tooltip value="Open on GitHub">
+                <ui.IconButton
+                  icon="square-arrow-top-right"
+                  label="Open on GitHub"
+                  variant="ghost"
+                  size="small"
+                  onClick={() => props.app.ctx.system.openExternal(comment.url)}
+                />
+              </ui.Tooltip>
             </div>
             <ui.Markdown text={comment.body} class="prr-markdown" />
           </div>
@@ -517,13 +573,13 @@ function Thread(props: {
       <Show
         when={replying()}
         fallback={
-          <button type="button" class="prr-reply-button prr-muted" onClick={() => setReplying(true)}>
+          <button type="button" class="prr-reply-button" onClick={() => setReplying(true)}>
             Reply…
           </button>
         }
       >
         <textarea
-          class="prr-textarea"
+          class="prr-textarea prr-reply-input"
           placeholder="Reply"
           value={body()}
           ref={(el) => queueMicrotask(() => el.focus())}
@@ -534,6 +590,7 @@ function Thread(props: {
           }}
         />
         <div class="prr-compose-actions">
+          <span class="prr-spacer" />
           <ui.Button size="small" variant="ghost" onClick={() => setReplying(false)}>
             Cancel
           </ui.Button>
@@ -546,10 +603,10 @@ function Thread(props: {
   )
 }
 
-const EVENTS: { value: ReviewEvent; label: string; description: string }[] = [
-  { value: "COMMENT", label: "Comment", description: "Submit general feedback without explicit approval." },
-  { value: "APPROVE", label: "Approve", description: "Give your approval to merge these changes." },
-  { value: "REQUEST_CHANGES", label: "Request changes", description: "Submit feedback that must be addressed." },
+const EVENTS: { value: ReviewEvent; label: string; description: string; own: boolean }[] = [
+  { value: "COMMENT", label: "Comment", description: "General feedback, without approving.", own: true },
+  { value: "APPROVE", label: "Approve", description: "Approve merging these changes.", own: false },
+  { value: "REQUEST_CHANGES", label: "Request changes", description: "Feedback that must be addressed first.", own: false },
 ]
 
 function openReviewDialog(
@@ -558,12 +615,16 @@ function openReviewDialog(
 ) {
   const ctx = app.ctx
   const ui = ctx.ui
+  const own = input.pr.author === input.pr.viewer
 
   ctx.dialogs.open((dialog) => {
     const [body, setBody] = createSignal("")
     const [event, setEvent] = createSignal<ReviewEvent>("COMMENT")
     const [sending, setSending] = createSignal(false)
-    const empty = () => event() === "COMMENT" && !body().trim() && input.drafts.length === 0
+    // GitHub rejects an empty comment review and a request for changes without a summary.
+    const invalid = () =>
+      (event() === "COMMENT" && !body().trim() && input.drafts.length === 0) ||
+      (event() === "REQUEST_CHANGES" && !body().trim())
 
     const send = async () => {
       setSending(true)
@@ -589,16 +650,16 @@ function openReviewDialog(
         title={`Review #${input.pr.number}`}
         description={
           input.drafts.length
-            ? `${input.drafts.length} pending comment${input.drafts.length === 1 ? "" : "s"} will be submitted.`
-            : undefined
+            ? `${plural(input.drafts.length, "pending comment")} will be submitted with the review.`
+            : "Leave a summary and choose how to review."
         }
-        size="normal"
+        size="fit"
         footer={
           <>
             <ui.Button variant="ghost" onClick={dialog.close}>
               Cancel
             </ui.Button>
-            <ui.Button variant="contrast" busy={sending()} disabled={empty()} onClick={() => void send()}>
+            <ui.Button variant="contrast" busy={sending()} disabled={invalid()} onClick={() => void send()}>
               Submit review
             </ui.Button>
           </>
@@ -607,26 +668,38 @@ function openReviewDialog(
         <div class="prr-review-dialog">
           <textarea
             class="prr-textarea prr-textarea-tall"
-            placeholder="Leave a summary (optional)"
+            placeholder={event() === "REQUEST_CHANGES" ? "Describe the changes you need (required)" : "Summary (optional)"}
             value={body()}
+            ref={(el) => queueMicrotask(() => el.focus())}
             onInput={(e) => setBody(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !invalid()) void send()
+            }}
           />
-          <For each={EVENTS}>
-            {(option) => (
-              <label class="prr-radio">
-                <input
-                  type="radio"
-                  name="prr-review-event"
-                  checked={event() === option.value}
-                  onChange={() => setEvent(option.value)}
-                />
-                <span>
-                  <span class="prr-strong">{option.label}</span>
-                  <span class="prr-muted"> — {option.description}</span>
-                </span>
-              </label>
-            )}
-          </For>
+          <div class="prr-options" role="radiogroup" aria-label="Review type">
+            <For each={EVENTS}>
+              {(option) => (
+                <label
+                  class="prr-option"
+                  classList={{ "prr-option-active": event() === option.value, "prr-option-disabled": own && !option.own }}
+                >
+                  <input
+                    type="radio"
+                    name="prr-review-event"
+                    checked={event() === option.value}
+                    disabled={own && !option.own}
+                    onChange={() => setEvent(option.value)}
+                  />
+                  <span class="prr-option-text">
+                    <span class="prr-strong">{option.label}</span>
+                    <span class="prr-muted">
+                      {own && !option.own ? "You can't do this on your own pull request." : option.description}
+                    </span>
+                  </span>
+                </label>
+              )}
+            </For>
+          </div>
         </div>
       </ui.Dialog>
     )

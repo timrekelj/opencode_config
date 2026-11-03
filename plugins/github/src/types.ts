@@ -107,6 +107,8 @@ export type TimelineItem =
 
 export interface PrDetail extends PrSummary {
   id: string
+  /** The signed-in GitHub user, so the panel can tell the author's own pull request apart. */
+  viewer: string
   body: string
   createdAt: string
   headOid: string
@@ -132,8 +134,11 @@ export interface PrFile {
 export interface ReviewComment {
   id: number
   path: string
+  /** The line in the current diff; null when the comment is outdated. */
   line: number | null
   startLine: number | null
+  /** The line in the diff the comment was written on, kept for outdated comments. */
+  originalLine: number | null
   side: Side
   body: string
   author: string

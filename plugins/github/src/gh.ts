@@ -171,6 +171,8 @@ const toSummary = (raw: RawPr, viewer: string): PrSummary => ({
 
 export class GitHub {
   private repos = new Map<string, Promise<RepoInfo>>()
+  /** GraphQL node ids by `${cwd}#${number}`, for the viewed-file mutations. */
+  private nodeIds = new Map<string, string>()
   private viewer: Promise<string> | undefined
 
   constructor(
@@ -247,7 +249,12 @@ export class GitHub {
         reviewDecision: decision(raw.reviewDecision),
       }
     } catch (error) {
-      if (error instanceof GhError && /no pull requests found|not a git repository|no git remotes/i.test(error.message))
+      if (
+        error instanceof GhError &&
+        /no pull requests found|not a git repository|no git remotes|could not determine current branch|not on any branch/i.test(
+          error.message,
+        )
+      )
         return null
       throw error
     }
@@ -319,7 +326,8 @@ export class GitHub {
         }),
       ),
       ...(raw.reviews ?? [])
-        .filter((r) => r.state !== "PENDING")
+        // Inline comments and thread replies arrive as empty COMMENTED reviews; they show in the Files tab instead.
+        .filter((r) => r.state !== "PENDING" && !(r.state === "COMMENTED" && !r.body.trim()))
         .map(
           (r): TimelineItem => ({
             kind: "review",
@@ -341,9 +349,11 @@ export class GitHub {
       ),
     ].sort((a, b) => a.createdAt.localeCompare(b.createdAt))
 
+    this.nodeIds.set(`${cwd}#${number}`, raw.id)
     return {
       ...toSummary(raw, repo.viewer),
       id: raw.id,
+      viewer: repo.viewer,
       body: raw.body,
       createdAt: raw.createdAt,
       headOid: raw.headRefOid,
@@ -372,6 +382,7 @@ export class GitHub {
           path: string
           line: number | null
           start_line: number | null
+          original_line: number | null
           side: "LEFT" | "RIGHT"
           body: string
           user: { login: string } | null
@@ -399,6 +410,7 @@ export class GitHub {
           path: c.path,
           line: c.line,
           startLine: c.start_line,
+          originalLine: c.original_line,
           side: c.side ?? "RIGHT",
           body: c.body,
           author: c.user?.login ?? "ghost",
@@ -449,7 +461,10 @@ export class GitHub {
   }
 
   async setViewed(cwd: string, number: number, path: string, viewed: boolean) {
-    const detail = await this.json<{ id: string }>(cwd, ["pr", "view", String(number), "--json", "id"])
+    const key = `${cwd}#${number}`
+    const id =
+      this.nodeIds.get(key) ?? (await this.json<{ id: string }>(cwd, ["pr", "view", String(number), "--json", "id"])).id
+    this.nodeIds.set(key, id)
     const mutation = viewed ? "markFileAsViewed" : "unmarkFileAsViewed"
     await this.run(cwd, [
       "api",
@@ -457,7 +472,7 @@ export class GitHub {
       "-f",
       `query=mutation($id: ID!, $path: String!) { ${mutation}(input: { pullRequestId: $id, path: $path }) { clientMutationId } }`,
       "-F",
-      `id=${detail.id}`,
+      `id=${id}`,
       "-F",
       `path=${path}`,
     ])

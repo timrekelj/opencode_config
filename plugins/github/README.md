@@ -10,20 +10,24 @@ Uses the GitHub CLI on the machine running the OpenCode server, so `gh auth logi
   elsewhere in a worktree), with checkout, create, rename, delete, merge-into-current, fetch / pull / push, and a
   commit graph (Local / Current / All) drawn like the screenshot's Git panel. Commands: *Open branches*,
   *Checkout branch…*, *New branch…*. A composer pill shows the current branch.
-- **Pull requests tab**:  the open PRs of the session's repository, grouped into *Needs your review*, *Your pull
-  requests* and *Everything else*. Search by title, `#number`, branch, author or label, and filter by
-  Open / Closed / Merged / All. Cmd-click a row to open it on GitHub.
+- **Pull requests tab**: the session repository's PRs, grouped into *Needs your review*, *Created by you* and
+  *Others*. Search by title, `#number`, branch, author or label, and switch between Open / Merged / Closed / All.
+  The PR for the checked-out branch is marked *This branch*. Cmd-click a row to open it on GitHub.
 - **One tab per PR** (`#123 Title`) with three views:
-  - **Summary**: description, labels, merge status, reviewers and checks.
-  - **Timeline**: comments, reviews and commits, plus a box to post a comment.
-  - **Code**: every changed file's diff with:
-    - *Viewed* checkboxes synced with GitHub's own viewed marks; viewed files collapse.
-    - Click the `+` on a line (shift-click to select a range) to write a comment, then either
+  - **Overview**: the description and labels, then a merge box with reviews, checks (expandable) and mergeability.
+  - **Activity**: comments, reviews and commits (consecutive commits grouped), with a *Comments only* filter and a box
+    to post a comment (⌘↵ sends).
+  - **Files**: every changed file's diff with:
+    - *Viewed* checkboxes synced with GitHub's own viewed marks, and a progress bar; viewed files collapse.
+    - Click the `+` on a line (shift-click to extend the range) to write a comment, then either
       **Add to review** (kept as a pending draft) or **Ask agent** (quotes the lines into the chat composer).
-    - Existing review threads shown inline, with replies.
-    - **Review** submits pending comments as Comment / Approve / Request changes.
+    - Review threads inline, with replies. Threads on lines that changed since show at the top of the file as
+      *Outdated*.
+    - **Review** submits pending comments as Comment / Approve / Request changes (Approve and Request changes are
+      disabled on your own PR, as GitHub rejects them).
 - **Header actions**: Review with agent (opens a draft session that's already prompted to review the PR), Check out,
-  Merge (squash / merge / rebase), Mark ready, Attach to chat, Copy link, Open on GitHub.
+  Merge (squash / merge commit / rebase), Ready for review (drafts), and in the menu Attach to chat, Copy link and
+  Copy branch name.
 - **Composer pill** showing the PR for the session's current branch and its check status.
 - **Commands**: *Open pull requests*, *Open pull request…* (searchable picker), *Open pull request for current branch*.
   You can bind keys to them in Settings > Shortcuts.

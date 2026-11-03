@@ -41,6 +41,18 @@ export const stateLabel = (pr: Pick<PrSummary, "state" | "draft">) =>
 export const stateClass = (pr: Pick<PrSummary, "state" | "draft">) =>
   pr.state === "MERGED" ? "merged" : pr.state === "CLOSED" ? "closed" : pr.draft ? "draft" : "open"
 
+/** The glyph for a pull request's state; tint it with `prr-state-fg-${stateClass(pr)}`. */
+export const stateIcon = (pr: Pick<PrSummary, "state" | "draft">): IconName =>
+  pr.state === "MERGED" ? "branch-out" : pr.state === "CLOSED" ? "circle-x" : pr.draft ? "circle-ban-sign" : "fork"
+
+export const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`
+
+/** `src/gui/code.tsx` → `["src/gui/", "code.tsx"]`, to show the file name stronger than its folder. */
+export function splitPath(path: string): [string, string] {
+  const slash = path.lastIndexOf("/")
+  return slash < 0 ? ["", path] : [path.slice(0, slash + 1), path.slice(slash + 1)]
+}
+
 export const avatar = (login: string) => `https://github.com/${encodeURIComponent(login)}.png?size=48`
 
 /**
