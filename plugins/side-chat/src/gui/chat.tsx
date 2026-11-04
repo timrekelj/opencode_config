@@ -1,5 +1,5 @@
 import type { Context, MountedSession, SessionRef, SessionScreen } from "@opencode/plugin/gui"
-import { createEffect, createSignal, For, Match, on, Show, Switch, untrack } from "solid-js"
+import { createEffect, createMemo, createSignal, For, Match, on, Show, Switch, untrack } from "solid-js"
 import { errorMessage, type Forks } from "./forks"
 
 type Data = SessionRef["server"]["data"]
@@ -65,15 +65,16 @@ export function Chat(props: {
     }),
   )
 
-  // The fork carries the main session's history; the side chat shows what was said after it.
-  const messages = () => {
+  // The fork carries the main session's history; the side chat shows what was said after it, so nothing until the fork
+  // is ready and its creation time known.
+  const messages = createMemo(() => {
     const current = fork()
-    if (!current?.id) return []
-    const since = current.created ?? 0
+    if (!current?.id || current.created === undefined) return []
+    const since = current.created
     return data()
       .session.message.list(current.id)
       .filter((message) => message.time.created >= since && (message.type === "user" || message.type === "assistant"))
-  }
+  })
   const running = () => {
     const current = id()
     return !!current && data().session.status(current) === "running"

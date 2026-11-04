@@ -16,7 +16,8 @@ export default Plugin.define({
     },
   },
   stores: {
-    // Every fork this app made and has not deleted yet, so one a closed window left behind is cleaned up.
+    // Every fork this app made and has not deleted yet, with the window that made it and each window's heartbeat, so
+    // one a closed window left behind is cleaned up without touching another window's open side chats.
     owned: Store.global(Owned, { forks: [] }),
   },
   setup(ctx) {
