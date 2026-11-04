@@ -8,7 +8,6 @@ const str = (value: unknown) => (typeof value === "string" && value ? value : un
 interface DeviceInput {
   platform: Platform
   id: string
-  name: string
 }
 
 export default Plugin.define({
@@ -33,8 +32,6 @@ export default Plugin.define({
       }
 
     await ctx.rpc.register(Hub, {
-      start: handle(() => hubs.start()),
-      status: handle(() => hubs.status()),
       restart: handle(() => hubs.restart()),
       list: handle(() => hubs.list()),
       boot: handle<DeviceInput, unknown>((i) => hubs.boot(i)),

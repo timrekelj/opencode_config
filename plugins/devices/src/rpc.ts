@@ -6,7 +6,7 @@ const nullable = {} as const
 const empty = { type: "object", properties: {} } as const
 
 const device = (required: string[]) =>
-  ({ type: "object", properties: { platform: str, id: str, name: str }, required }) as const
+  ({ type: "object", properties: { platform: str, id: str }, required }) as const
 
 const errors = {
   hub_failed: { type: "object", properties: { message: str } },
@@ -18,10 +18,6 @@ const method = <I extends object, O extends object>(i: I, o: O) => ({ input: i, 
 export const Hub = Rpc.define({
   id: "devices",
   methods: {
-    /** Starts the main hub if it is not running and returns its status. */
-    start: method(empty, any),
-    /** The main hub's status, without starting it. */
-    status: method(empty, any),
     /** Stops every hub and starts the main one again. */
     restart: method(empty, any),
     /** Every simulator and emulator, running or not. */

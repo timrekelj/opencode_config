@@ -1,15 +1,15 @@
 import type { Plugin } from "@opencode/plugin/gui"
-import { createSignal } from "solid-js"
-import { createStore } from "solid-js/store"
+import { batch, createSignal } from "solid-js"
+import { createStore, reconcile } from "solid-js/store"
 import { Hub } from "../rpc"
 import type { Device, DeviceList, HubStatus, Platform } from "../types"
 
-export type Ctx = Parameters<Plugin.Setup>[0]
+type Ctx = Parameters<Plugin.Setup>[0]
 
 export const LIST_TAB = "devices"
-export const DEVICE_PREFIX = "device:"
+const DEVICE_PREFIX = "device:"
 
-export const deviceTabId = (key: string) => `${DEVICE_PREFIX}${key}`
+const deviceTabId = (key: string) => `${DEVICE_PREFIX}${key}`
 export const deviceTabKey = (id: string) => (id.startsWith(DEVICE_PREFIX) ? id.slice(DEVICE_PREFIX.length) : undefined)
 
 /** A readable name before the list loads: the AVD name of `android:<avd>`, else the key. */
@@ -19,8 +19,6 @@ export const fallbackName = (key: string) =>
 export const platformLabel = (platform: Platform) => (platform === "ios" ? "iOS Simulators" : "Android Emulators")
 
 interface Rpc {
-  start(input: object): Promise<HubStatus>
-  status(input: object): Promise<HubStatus>
   restart(input: object): Promise<HubStatus>
   list(input: object): Promise<DeviceList>
   boot(input: { platform: Platform; id: string }): Promise<Device>
@@ -54,7 +52,12 @@ export function makeApp(ctx: Ctx) {
     (inflight ??= rpc()
       .list({})
       .then(
-        (list) => setState({ loaded: true, devices: list.devices, errors: list.errors, platforms: list.platforms, error: null }),
+        (list) =>
+          batch(() => {
+            // Keep each device's object across polls, so rows (and their focus) survive a refresh.
+            setState("devices", reconcile(list.devices, { key: "key" }))
+            setState({ loaded: true, errors: list.errors, platforms: list.platforms, error: null })
+          }),
         (error) => setState({ loaded: true, error: message(error) }),
       )
       .finally(() => (inflight = undefined)))

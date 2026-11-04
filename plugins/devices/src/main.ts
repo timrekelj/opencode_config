@@ -122,7 +122,10 @@ export function main(ctx: MainContext) {
       }
       if (entry.url !== url) {
         entry.url = url
-        await entry.view.webContents.loadURL(url).catch(() => {})
+        await entry.view.webContents.loadURL(url).catch((error: { code?: string }) => {
+          // A newer load replacing this one aborts it; any other failure should load again on the next open.
+          if (error?.code !== "ERR_ABORTED" && entry.url === url) entry.url = ""
+        })
       }
       return entry.embed.id
     },

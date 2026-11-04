@@ -1,5 +1,5 @@
 import { usePanel } from "@opencode/plugin/gui"
-import { createEffect, For, Match, onCleanup, Show, Switch } from "solid-js"
+import { createEffect, createMemo, For, Match, onCleanup, Show, Switch } from "solid-js"
 import type { Device, Platform } from "../types"
 import { PhoneIcon } from "./phone"
 import { platformLabel, type App } from "./state"
@@ -17,18 +17,17 @@ export function usePolling(app: App) {
   })
 }
 
-const groups = (devices: readonly Device[]) =>
-  (["ios", "android"] as Platform[]).flatMap((platform) => {
-    const list = devices
-      .filter((d) => d.platform === platform)
-      .sort(
-        (a, b) =>
-          Number(b.booted) - Number(a.booted) ||
-          Number(!!a.unavailable) - Number(!!b.unavailable) ||
-          a.name.localeCompare(b.name),
-      )
-    return list.length ? [{ platform, devices: list }] : []
-  })
+const PLATFORMS: Platform[] = ["ios", "android"]
+
+const sorted = (devices: readonly Device[], platform: Platform) =>
+  devices
+    .filter((d) => d.platform === platform)
+    .sort(
+      (a, b) =>
+        Number(b.booted) - Number(a.booted) ||
+        Number(!!a.unavailable) - Number(!!b.unavailable) ||
+        a.name.localeCompare(b.name),
+    )
 
 /** Every simulator and emulator, with Open for running ones and Start for stopped ones, as T3 Code's Device panel. */
 export function DeviceList(props: { app: App }) {
@@ -77,18 +76,23 @@ export function DeviceList(props: { app: App }) {
           </Match>
           <Match when={true}>
             <div class="dev-sections">
-              <For each={groups(app.state.devices)}>
-                {(group) => (
-                  <section class="dev-section">
-                    <h3 class="dev-section-title">
-                      <PhoneIcon class="dev-section-icon" />
-                      {platformLabel(group.platform)}
-                    </h3>
-                    <div class="dev-list">
-                      <For each={group.devices}>{(device) => <DeviceRow app={app} device={device} />}</For>
-                    </div>
-                  </section>
-                )}
+              <For each={PLATFORMS}>
+                {(platform) => {
+                  const devices = createMemo(() => sorted(app.state.devices, platform))
+                  return (
+                    <Show when={devices().length > 0}>
+                      <section class="dev-section">
+                        <h3 class="dev-section-title">
+                          <PhoneIcon class="dev-section-icon" />
+                          {platformLabel(platform)}
+                        </h3>
+                        <div class="dev-list">
+                          <For each={devices()}>{(device) => <DeviceRow app={app} device={device} />}</For>
+                        </div>
+                      </section>
+                    </Show>
+                  )
+                }}
               </For>
               <Show when={app.state.platforms.includes("android") && !app.state.devices.some((d) => d.platform === "android")}>
                 <p class="dev-hint">

@@ -8,7 +8,7 @@ export interface HubStatus {
   /** Why the last start failed. */
   error: string | null
   /** Platforms the hub can show: `ios` needs Xcode, `android` the Android SDK. */
-  platforms: string[]
+  platforms: Platform[]
 }
 
 export interface Device {

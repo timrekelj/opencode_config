@@ -7,11 +7,15 @@ import { fileURLToPath } from "node:url"
 import type { Device, DeviceList, HubStatus, Platform } from "./types"
 
 const READY_TIMEOUT_MS = 30_000
+const READY_REQUEST_TIMEOUT_MS = 2_000
+const API_TIMEOUT_MS = 60_000
 const BOOT_TIMEOUT_MS = 180_000
+/** How long a device listing is reused, so every window's poll shares one. */
+const LIST_CACHE_MS = 1_000
 const STATE_DIR = join(homedir(), ".cache", "opencode-devices")
 const CLI = fileURLToPath(new URL("../node_modules/expo-device-hub/dist/server/cli.mjs", import.meta.url))
 
-export interface HubOptions {
+interface HubOptions {
   /** Node to run the hub with; the hub's native addons need Node, not Bun. */
   node?: string
   androidHome?: string
@@ -45,7 +49,10 @@ const freePort = () =>
 
 /** The service's PATH is launchd's, so look where Node is usually installed, then ask a login shell. */
 async function findNode(configured?: string) {
-  if (configured) return configured
+  if (configured) {
+    if (existsSync(configured)) return configured
+    throw new Error(`Node.js was not found at ${configured}. Fix "node" in the devices plugin options.`)
+  }
   const candidates = [
     ...(process.env.PATH ?? "").split(delimiter).map((dir) => join(dir, "node")),
     "/opt/homebrew/bin/node",
@@ -138,11 +145,17 @@ async function reapStale() {
   }
 }
 
-async function waitReady(origin: string, child: ChildProcess) {
+/** A child killed by a signal keeps `exitCode` null. */
+const exited = (child: ChildProcess) => child.exitCode !== null || child.signalCode !== null
+
+/** Polls the hub until it answers; `failed` reports a spawn error or a stop, which end the wait early. */
+async function waitReady(origin: string, child: ChildProcess, failed: () => Error | undefined) {
   const deadline = Date.now() + READY_TIMEOUT_MS
   while (Date.now() < deadline) {
-    if (child.exitCode !== null) throw new Error(`The device hub exited with code ${child.exitCode}.`)
-    const ok = await fetch(`${origin}/readyz`).then(
+    const error = failed()
+    if (error) throw error
+    if (exited(child)) throw new Error(`The device hub exited (${child.signalCode ?? `code ${child.exitCode}`}).`)
+    const ok = await fetch(`${origin}/readyz`, { signal: AbortSignal.timeout(READY_REQUEST_TIMEOUT_MS) }).then(
       (response) => response.ok,
       () => false,
     )
@@ -158,6 +171,10 @@ class HubProcess {
   private starting: Promise<void> | undefined
   private status: HubStatus = { state: "stopped", origin: null, error: null, platforms: [] }
   private output: string[] = []
+  /** Bumped by stop(), so a start in progress notices it was cancelled. */
+  private generation = 0
+  /** When this hub was made, so a device listing that began earlier does not stop it. */
+  readonly created = Date.now()
 
   constructor(
     private readonly name: string,
@@ -174,12 +191,17 @@ class HubProcess {
   }
 
   running() {
-    return this.status.state === "running" && this.child?.exitCode === null
+    return this.status.state === "running" && !!this.child && !exited(this.child)
   }
 
   async start(): Promise<HubStatus> {
     if (this.running()) return this.current()
-    this.starting ??= this.spawn().finally(() => (this.starting = undefined))
+    if (!this.starting) {
+      const starting = this.spawn().finally(() => {
+        if (this.starting === starting) this.starting = undefined
+      })
+      this.starting = starting
+    }
     await this.starting.catch(() => {})
     return this.current()
   }
@@ -191,33 +213,45 @@ class HubProcess {
     return status.origin
   }
 
+  /** Kills the hub right away, also while it is still starting. */
   async stop() {
-    await this.starting?.catch(() => {})
+    this.generation++
+    this.starting = undefined
     const child = this.child
     this.child = undefined
     this.status = { ...this.status, state: "stopped", origin: null }
-    if (child && child.exitCode === null) {
+    if (child && !exited(child)) {
       child.kill("SIGTERM")
-      const exited = new Promise((resolve) => child.once("exit", resolve))
-      await Promise.race([exited, sleep(3000)])
-      if (child.exitCode === null) child.kill("SIGKILL")
+      const done = new Promise((resolve) => child.once("exit", resolve))
+      await Promise.race([done, sleep(3000)])
+      if (!exited(child)) child.kill("SIGKILL")
     }
     rmSync(this.pidFile, { force: true })
   }
 
   private async spawn() {
+    const generation = this.generation
+    const cancelled = () => (this.generation === generation ? undefined : new Error("The device hub was stopped."))
     this.status = { state: "starting", origin: null, error: null, platforms: [] }
     this.output = []
+    let spawned: ChildProcess | undefined
     try {
       const { node, env, platforms } = await this.environment()
       const port = await freePort()
+      const stopped = cancelled()
+      if (stopped) throw stopped
       const origin = `http://127.0.0.1:${port}`
       const child = spawn(node, [CLI, "--port", String(port), "--host", "127.0.0.1", ...this.args], {
         env,
         stdio: ["ignore", "pipe", "pipe"],
       })
+      spawned = child
       this.child = child
+      // Without a listener, a spawn error (e.g. ENOENT for a bad node path) would crash the server.
+      let spawnError: Error | undefined
+      child.on("error", (error) => (spawnError ??= error))
       const keep = (chunk: Buffer) => {
+        if (this.child !== child) return
         this.output.push(...chunk.toString().split("\n").filter(Boolean))
         this.output = this.output.slice(-40)
       }
@@ -236,14 +270,19 @@ class HubProcess {
       })
 
       mkdirSync(STATE_DIR, { recursive: true })
-      writeFileSync(this.pidFile, JSON.stringify({ pid: child.pid, port }))
-      await waitReady(origin, child)
+      if (child.pid) writeFileSync(this.pidFile, JSON.stringify({ pid: child.pid, port }))
+      await waitReady(origin, child, () => spawnError ?? cancelled())
+      const late = cancelled()
+      if (late) throw late
       this.status = { state: "running", origin, error: null, platforms }
     } catch (error) {
+      if (spawned && !exited(spawned)) spawned.kill("SIGKILL")
+      // A stop() since this start began owns the status now, and possibly a newer child.
+      if (cancelled()) throw error
       const message = error instanceof Error ? error.message : String(error)
       const tail = this.output.slice(-10).join("\n")
-      this.child?.kill("SIGKILL")
       this.child = undefined
+      rmSync(this.pidFile, { force: true })
       this.status = { state: "failed", origin: null, error: tail ? `${message}\n${tail}` : message, platforms: [] }
       throw error
     }
@@ -292,14 +331,23 @@ const readIni = (file: string) => {
 
 /**
  * AVDs from `emulator -list-avds`, joined with running emulators from `adb devices` by asking each emulator its AVD
- * name. A running emulator's id is its adb serial; a stopped one's is its AVD name.
+ * name. A running emulator's id is its adb serial; a stopped one's is its AVD name. `complete` is false when adb could
+ * not tell which emulators run, so the running ones may show as stopped; `error` says why adb failed.
  */
-async function listEmulators(env: NodeJS.ProcessEnv): Promise<Device[]> {
+async function listEmulators(
+  env: NodeJS.ProcessEnv,
+): Promise<{ devices: Device[]; complete: boolean; error: string | undefined }> {
   const home = env.ANDROID_HOME!
   const adb = join(home, "platform-tools", "adb")
+  let complete = true
+  let error: string | undefined
   const [avds, adbDevices] = await Promise.all([
     run(join(home, "emulator", "emulator"), ["-list-avds"], env).then((out) => out.split("\n").map((l) => l.trim())),
-    run(adb, ["devices"], env).catch(() => ""),
+    run(adb, ["devices"], env).catch((e) => {
+      complete = false
+      error = `adb devices failed: ${message(e)}`
+      return ""
+    }),
   ])
   const serials = adbDevices
     .split("\n")
@@ -312,10 +360,11 @@ async function listEmulators(env: NodeJS.ProcessEnv): Promise<Device[]> {
       const name = await run(adb, ["-s", serial, "emu", "avd", "name"], env).catch(() => "")
       const avd = name.split("\n")[0]?.trim()
       if (avd) running.set(avd, serial)
+      else complete = false
     }),
   )
   const avdHome = env.ANDROID_AVD_HOME || join(homedir(), ".android", "avd")
-  return avds
+  const devices = avds
     .filter((avd) => avd && !/^(INFO|WARNING|ERROR)\b/.test(avd))
     .map((avd) => {
       const pointer = readIni(join(avdHome, `${avd}.ini`))
@@ -332,6 +381,7 @@ async function listEmulators(env: NodeJS.ProcessEnv): Promise<Device[]> {
         key: `android:${avd}`,
       }
     })
+  return { devices, complete, error }
 }
 
 /**
@@ -343,6 +393,9 @@ export class Hubs {
   private reaped: Promise<void> | undefined
   private readonly main: HubProcess
   private readonly devices = new Map<string, HubProcess>()
+  /** The listing in progress, shared by every caller, and the last one, reused for LIST_CACHE_MS. */
+  private listing: Promise<DeviceList> | undefined
+  private listed: { at: number; list: DeviceList } | undefined
 
   constructor(private readonly options: HubOptions) {
     this.main = new HubProcess("main", () => this.env(), options.args ?? [])
@@ -358,16 +411,9 @@ export class Hubs {
     return this.environment
   }
 
-  status(): HubStatus {
-    return this.main.current()
-  }
-
-  start() {
-    return this.main.start()
-  }
-
   async restart() {
     this.environment = undefined
+    this.listed = undefined
     await this.stop()
     return this.main.start()
   }
@@ -384,6 +430,7 @@ export class Hubs {
       method: body ? "POST" : "GET",
       headers: body ? { "content-type": "application/json", accept: "application/json" } : { accept: "application/json" },
       body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(API_TIMEOUT_MS),
     })
     const json = (await response.json().catch(() => ({}))) as { ok?: boolean; error?: string; errors?: { message: string }[] }
     if (!response.ok || json.ok === false) {
@@ -396,21 +443,60 @@ export class Hubs {
    * Every installed simulator and emulator. Listed here rather than by the hub: the hub leaves out devices that were
    * never booted and simulators whose runtime is missing, and this page should show them all.
    */
-  async list(): Promise<DeviceList> {
+  list(): Promise<DeviceList> {
+    if (this.listed && Date.now() - this.listed.at < LIST_CACHE_MS) return Promise.resolve(this.listed.list)
+    if (!this.listing) {
+      const listing = this.listDevices()
+        .then((list) => {
+          if (this.listing === listing) this.listed = { at: Date.now(), list }
+          return list
+        })
+        .finally(() => {
+          if (this.listing === listing) this.listing = undefined
+        })
+      this.listing = listing
+    }
+    return this.listing
+  }
+
+  /** Drops the cached listing after a boot or shutdown, so the next list sees it. */
+  private invalidate() {
+    this.listing = undefined
+    this.listed = undefined
+  }
+
+  private async listDevices(): Promise<DeviceList> {
+    const started = Date.now()
     const { platforms, env } = await this.env()
     const errors: string[] = []
+    // Platforms whose running devices are known; a failed listing says nothing about which devices stopped.
+    const known = new Set<Platform>()
     const [ios, android] = await Promise.all([
-      platforms.includes("ios") ? listSimulators(env).catch((e) => (errors.push(`iOS: ${message(e)}`), [])) : [],
-      platforms.includes("android") ? listEmulators(env).catch((e) => (errors.push(`Android: ${message(e)}`), [])) : [],
+      platforms.includes("ios")
+        ? listSimulators(env).then(
+            (devices) => (known.add("ios"), devices),
+            (e) => (errors.push(`iOS: ${message(e)}`), []),
+          )
+        : [],
+      platforms.includes("android")
+        ? listEmulators(env).then(
+            (result) => {
+              if (result.complete) known.add("android")
+              if (result.error) errors.push(`Android: ${result.error}`)
+              return result.devices
+            },
+            (e) => (errors.push(`Android: ${message(e)}`), []),
+          )
+        : [],
     ])
     const devices = [...ios, ...android]
-    // Stop the hubs of devices that are no longer running.
+    // Stop the hubs of devices that are no longer running, but not ones opened after this listing began.
     const running = new Set(devices.filter((d) => d.booted).map((d) => deviceKey(d.platform, d.id)))
     for (const [key, hub] of this.devices) {
-      if (!running.has(key)) {
-        this.devices.delete(key)
-        void hub.stop()
-      }
+      const platform = key.slice(0, key.indexOf(":")) as Platform
+      if (!known.has(platform) || hub.created >= started || running.has(key)) continue
+      this.devices.delete(key)
+      void hub.stop()
     }
     return { devices, errors, platforms }
   }
@@ -436,6 +522,7 @@ export class Hubs {
     if (device.booted) return device
     if (device.unavailable) throw new Error(device.unavailable)
     await this.api("/api/devices/boot", this.action(device))
+    this.invalidate()
     const deadline = Date.now() + BOOT_TIMEOUT_MS
     while (Date.now() < deadline) {
       const { devices } = await this.list()
@@ -452,12 +539,17 @@ export class Hubs {
     this.devices.delete(key)
     await hub?.stop()
     const device = await this.find(input)
-    if (device.booted) await this.api("/api/devices/shutdown", this.action(device))
+    if (device.booted) {
+      await this.api("/api/devices/shutdown", this.action(device))
+      this.invalidate()
+    }
     return null
   }
 
   /** The origin of a hub locked to one running device, started on first use. */
   async open(input: { platform: Platform; id: string }): Promise<HubStatus> {
+    const device = await this.find(input)
+    if (!device.booted) throw new Error(`${device.name} isn't running.`)
     const key = deviceKey(input.platform, input.id)
     let hub = this.devices.get(key)
     if (!hub) {
@@ -473,7 +565,7 @@ export class Hubs {
     }
     const status = await hub.start()
     if (status.state === "failed") {
-      this.devices.delete(key)
+      if (this.devices.get(key) === hub) this.devices.delete(key)
       throw new Error(status.error ?? "The device hub failed to start.")
     }
     return status

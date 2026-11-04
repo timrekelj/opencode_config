@@ -33,6 +33,9 @@ export function DeviceTab(props: { app: App; deviceKey: string }) {
   const [embed, setEmbed] = createSignal<string>()
   const [error, setError] = createSignal<string>()
 
+  // The device the hub was last asked for, so a late answer for an older one is dropped.
+  let opening: string | undefined
+
   // Start the device's hub whenever the device runs under a new id (an emulator gets a new serial on each boot).
   createEffect(
     on(
@@ -41,6 +44,7 @@ export function DeviceTab(props: { app: App; deviceKey: string }) {
         return d?.booted ? `${d.platform}\u0000${d.id}` : undefined
       },
       (target) => {
+        opening = target
         setOrigin(undefined)
         setEmbed(undefined)
         setError(undefined)
@@ -51,10 +55,11 @@ export function DeviceTab(props: { app: App; deviceKey: string }) {
           .open({ platform: d.platform, id: d.id })
           .then(
             (status) => {
+              if (opening !== target) return
               if (status.origin) setOrigin(status.origin)
               else setError(status.error ?? "The device hub did not start.")
             },
-            (e) => setError(app.message(e)),
+            (e) => opening === target && setError(app.message(e)),
           )
       },
     ),
@@ -67,9 +72,11 @@ export function DeviceTab(props: { app: App; deviceKey: string }) {
   createEffect(
     on([origin, panel.visible], ([url, visible]) => {
       if (!url || !visible || !root || !toolbar) return
-      view
-        .open({ key: props.deviceKey, url: `${url}/`, theme: panelTheme(root, toolbar) })
-        .then(setEmbed, (e) => setError(app.message(e)))
+      const current = () => origin() === url
+      view.open({ key: props.deviceKey, url: `${url}/`, theme: panelTheme(root, toolbar) }).then(
+        (id) => current() && setEmbed(id),
+        (e) => current() && setError(app.message(e)),
+      )
     }),
   )
 

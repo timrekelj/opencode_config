@@ -64,9 +64,6 @@
 .dev-dot-starting {
   background: var(--dev-warning);
 }
-.dev-dot-failed {
-  background: var(--dev-danger);
-}
 
 .dev-embed {
   flex: 1;

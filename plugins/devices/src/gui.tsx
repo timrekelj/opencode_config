@@ -5,7 +5,7 @@ import { main } from "./main"
 import { DeviceTab } from "./gui/device"
 import { DeviceList } from "./gui/list"
 import { PhoneIcon } from "./gui/phone"
-import { deviceTabKey, fallbackName, LIST_TAB, makeApp } from "./gui/state"
+import { deviceTabKey, fallbackName, LIST_TAB, makeApp, platformLabel } from "./gui/state"
 import css from "./gui/style.css?inline"
 
 export default Plugin.define({
@@ -136,7 +136,7 @@ export default Plugin.define({
               title: device.name,
               description: `${device.version} · ${device.booted ? "Running" : "Stopped"}`,
               value: device.key,
-              group: device.platform === "ios" ? "iOS Simulators" : "Android Emulators",
+              group: platformLabel(device.platform),
             })),
           })
           const device = key === undefined ? undefined : app.device(key)
