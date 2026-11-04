@@ -21,6 +21,24 @@ const tokens = {
   },
 } as const
 
+const usageRanges = {
+  type: "array",
+  items: {
+    type: "object",
+    properties: {
+      sessions: num,
+      subagents: num,
+      steps: num,
+      cost: num,
+      tokens,
+      models: {
+        type: "array",
+        items: { type: "object", properties: { model: modelRef, steps: num, cost: num, tokens } },
+      },
+    },
+  },
+} as const
+
 export const UsageView = Rpc.define({
   id: "usage-view",
   methods: {
@@ -66,23 +84,8 @@ export const UsageView = Rpc.define({
         type: "object",
         properties: {
           earliest: num,
-          ranges: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                sessions: num,
-                subagents: num,
-                steps: num,
-                cost: num,
-                tokens,
-                models: {
-                  type: "array",
-                  items: { type: "object", properties: { model: modelRef, steps: num, cost: num, tokens } },
-                },
-              },
-            },
-          },
+          ranges: usageRanges,
+          adopted: usageRanges,
         },
       },
       errors,

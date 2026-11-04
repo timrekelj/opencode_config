@@ -46,6 +46,11 @@ export interface RetainedResult {
   /** Earliest retained usage in scope, if any. */
   earliest?: number
   ranges: RetainedRange[]
+  /**
+   * With a project, usage of live subagent sessions filed under another project whose root session is in this one,
+   * per range. OpenCode's stats leave these out.
+   */
+  adopted?: RetainedRange[]
 }
 
 /** Usage on one local day, as `YYYY-MM-DD`, split by model. Live and deleted sessions both count. */

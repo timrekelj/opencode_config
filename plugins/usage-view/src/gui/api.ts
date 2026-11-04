@@ -286,9 +286,13 @@ export async function loadUsage(
     }
   }
 
+  // Subagents filed under another project than their root session are missing from the stats; add them back.
+  const addExtra = (stats: Stats, result: RetainedResult | undefined, index: number) =>
+    addRetained(addRetained(stats, result?.ranges[index]), result?.adopted?.[index])
+
   const retainedTotal = await retained([{ from, to: now }])
   const earliest = Math.min(liveTotals.range.from || now, retainedTotal?.earliest ?? now)
-  const totals = addRetained(liveTotals, retainedTotal?.ranges[0])
+  const totals = addExtra(liveTotals, retainedTotal, 0)
 
   const shells = makeBuckets(input.range, now, earliest)
   const [bucketStats, retainedBuckets] = await Promise.all([
@@ -305,7 +309,7 @@ export async function loadUsage(
   ])
   const buckets: Bucket[] = shells.map((bucket, index) => {
     const stats = bucketStats[index]
-    return stats ? { ...bucket, stats: addRetained(stats, retainedBuckets?.ranges[index]) } : bucket
+    return stats ? { ...bucket, stats: addExtra(stats, retainedBuckets, index) } : bucket
   })
 
   const sessions = list.sessions

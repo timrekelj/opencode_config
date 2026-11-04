@@ -19,8 +19,15 @@ type Row = [number, string, string, number, number, number, number, number, numb
 interface Entry {
   projectID: string
   parentID: string | null
+  /** Project of the session's root session, when it differs. Subagents can land in another project than their parent. */
+  rootProjectID?: string
   deletedAt: number | null
   rows: Row[]
+}
+
+interface SessionRef {
+  parent: string | null
+  project: string
 }
 
 interface Storage {
@@ -109,7 +116,8 @@ function dayFormatter(timezone: string | undefined): (time: number) => string {
 
 /**
  * Keeps a copy of every session's usage in plugin storage, so usage of deleted sessions still counts.
- * Live sessions are read from OpenCode's own stats; only deleted ones are answered from here.
+ * Live sessions are read from OpenCode's own stats; only deleted ones, and subagents that stats file under another
+ * project than their root session, are answered from here.
  */
 export class Ledger {
   private db: Database | undefined
@@ -118,6 +126,8 @@ export class Ledger {
   private live = new Set<string>()
   /** Sessions in the ledger that were deleted, with their usage. */
   private deleted = new Map<string, Entry>()
+  /** Parent and project of every session in OpenCode's database, as of the last sync. */
+  private sessions = new Map<string, SessionRef>()
   private loaded: Promise<void> | undefined
   private running: Promise<void> | undefined
   private pending = false
@@ -211,12 +221,21 @@ export class Ledger {
       since,
     )
 
+    this.sessions = new Map(
+      db
+        .all("SELECT id, parent_id AS parent, project_id AS project FROM session_v2")
+        .map((r) => [r.id, { parent: r.parent ?? null, project: String(r.project) }]),
+    )
+
     const changed = new Map<string, Entry>()
     for (const r of rows) {
       if (typeof r.provider !== "string" || typeof r.model !== "string") continue
       let entry = changed.get(r.session)
       if (!entry) {
-        entry = { projectID: String(r.project), parentID: r.parent ?? null, deletedAt: null, rows: [] }
+        const projectID = String(r.project)
+        const root = this.rootProject(r.session)
+        entry = { projectID, parentID: r.parent ?? null, deletedAt: null, rows: [] }
+        if (root && root !== projectID) entry.rootProjectID = root
         changed.set(r.session, entry)
       }
       entry.rows.push([
@@ -238,9 +257,8 @@ export class Ledger {
       this.deleted.delete(id)
     }
 
-    const existing = new Set<string>(db.all("SELECT id FROM session_v2").map((r) => r.id))
     for (const id of [...this.live]) {
-      if (existing.has(id)) continue
+      if (this.sessions.has(id)) continue
       this.live.delete(id)
       const stored = await this.storage.get(PREFIX + id)
       if (!isEntry(stored)) continue
@@ -268,10 +286,100 @@ export class Ledger {
     await this.storage.set("meta", { syncedAt: startedAt })
   }
 
-  /** Usage of deleted sessions in each range, optionally limited to one project. */
+  /** Project of the session at the top of the session's parent chain, if the chain is known. */
+  private rootProject(id: string): string | undefined {
+    let session = this.sessions.get(id)
+    for (let depth = 0; session?.parent && depth < 64; depth++) {
+      const parent = this.sessions.get(session.parent)
+      if (!parent) break
+      session = parent
+    }
+    return session?.project
+  }
+
+  /** A session belongs to a project when it or its root session is filed under it. */
+  private static inProject(entry: Entry, project: string | undefined) {
+    return !project || entry.projectID === project || entry.rootProjectID === project
+  }
+
+  /**
+   * Live subagent sessions filed under another project than their root session, when the root is in `project`.
+   * OpenCode's stats filter by each session's own project, so they miss these (e.g. a subagent started after `git init`
+   * in a directory whose parent session began as a global one).
+   */
+  private adoptedIDs(project: string): string[] {
+    const ids: string[] = []
+    for (const [id, session] of this.sessions) {
+      if (session.parent && session.project !== project && this.rootProject(id) === project) ids.push(id)
+    }
+    return ids
+  }
+
+  /** Usage rows of live sessions, read from OpenCode's database. */
+  private liveEntries(ids: string[]): Map<string, Entry> {
+    const entries = new Map<string, Entry>()
+    if (ids.length === 0 || !this.db) return entries
+    const rows = this.db.all(
+      `SELECT m.session_id AS session,
+         (m.time_created / ${SLOT_MS}) * ${SLOT_MS} AS slot,
+         json_extract(m.data, '$.model.providerID') AS provider,
+         json_extract(m.data, '$.model.id') AS model,
+         count(*) AS steps,
+         sum(coalesce(json_extract(m.data, '$.tokens.input'), 0)) AS input,
+         sum(coalesce(json_extract(m.data, '$.tokens.output'), 0)) AS output,
+         sum(coalesce(json_extract(m.data, '$.tokens.reasoning'), 0)) AS reasoning,
+         sum(coalesce(json_extract(m.data, '$.tokens.cache.read'), 0)) AS cache_read,
+         sum(coalesce(json_extract(m.data, '$.tokens.cache.write'), 0)) AS cache_write,
+         sum(coalesce(json_extract(m.data, '$.cost'), 0)) AS cost
+       FROM session_message m
+       WHERE m.type = 'assistant'
+         AND json_extract(m.data, '$.tokens') IS NOT NULL
+         AND m.session_id IN (SELECT value FROM json_each(?))
+       GROUP BY m.session_id, slot, provider, model`,
+      JSON.stringify(ids),
+    )
+    for (const r of rows) {
+      if (typeof r.provider !== "string" || typeof r.model !== "string") continue
+      let entry = entries.get(r.session)
+      if (!entry) {
+        const session = this.sessions.get(r.session)
+        entry = { projectID: session?.project ?? "", parentID: session?.parent ?? null, deletedAt: null, rows: [] }
+        entries.set(r.session, entry)
+      }
+      entry.rows.push([
+        Number(r.slot),
+        r.provider,
+        r.model,
+        Number(r.steps),
+        Number(r.input),
+        Number(r.output),
+        Number(r.reasoning),
+        Number(r.cache_read),
+        Number(r.cache_write),
+        Number(r.cost),
+      ])
+    }
+    return entries
+  }
+
+  /**
+   * Usage that OpenCode's stats leave out, in each range: deleted sessions, and with a project, live subagent sessions
+   * that belong to it through their root session but are filed under another project.
+   */
   async retained(input: { ranges: { from?: number; to: number }[]; project?: string }): Promise<RetainedResult> {
     await this.sync()
-    const ranges = input.ranges.map(() => ({
+    const project = input.project
+    const deleted = [...this.deleted].filter(([, entry]) => Ledger.inProject(entry, project))
+    const adopted = project ? [...this.liveEntries(this.adoptedIDs(project))] : []
+    const a = this.aggregate(input.ranges, deleted)
+    const b = this.aggregate(input.ranges, adopted)
+    const earliest =
+      a.earliest === undefined ? b.earliest : b.earliest === undefined ? a.earliest : Math.min(a.earliest, b.earliest)
+    return { earliest, ranges: a.ranges, adopted: adopted.length > 0 ? b.ranges : undefined }
+  }
+
+  private aggregate(input: { from?: number; to: number }[], entries: [string, Entry][]) {
+    const ranges = input.map(() => ({
       sessions: 0,
       subagents: 0,
       steps: 0,
@@ -281,11 +389,10 @@ export class Ledger {
       ids: new Set<string>(),
     }))
     let earliest: number | undefined
-    for (const [id, entry] of this.deleted) {
-      if (input.project && entry.projectID !== input.project) continue
+    for (const [id, entry] of entries) {
       for (const row of entry.rows) {
         earliest = earliest === undefined ? row[0] : Math.min(earliest, row[0])
-        input.ranges.forEach((range, index) => {
+        input.forEach((range, index) => {
           if ((range.from !== undefined && row[0] < range.from) || row[0] >= range.to) return
           const target = ranges[index]!
           addRow(target, row)
@@ -352,9 +459,11 @@ export class Ledger {
        WHERE m.type = 'assistant'
          AND json_extract(m.data, '$.tokens') IS NOT NULL
          AND m.time_created >= ? AND m.time_created < ?
-         ${input.project ? "AND s.project_id = ?" : ""}
+         ${input.project ? "AND (s.project_id = ? OR s.id IN (SELECT value FROM json_each(?)))" : ""}
        GROUP BY slot, provider, model`,
-      ...(input.project ? [input.from, input.to, input.project] : [input.from, input.to]),
+      ...(input.project
+        ? [input.from, input.to, input.project, JSON.stringify(this.adoptedIDs(input.project))]
+        : [input.from, input.to]),
     )
     for (const r of rows) {
       if (typeof r.provider !== "string" || typeof r.model !== "string") continue
@@ -372,7 +481,7 @@ export class Ledger {
       ])
     }
     for (const entry of this.deleted.values()) {
-      if (input.project && entry.projectID !== input.project) continue
+      if (!Ledger.inProject(entry, input.project)) continue
       for (const row of entry.rows) if (row[0] >= input.from && row[0] < input.to) add(row)
     }
     return {
