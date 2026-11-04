@@ -1,5 +1,5 @@
 import { createLatest, type Context, type MountedSession } from "@opencode/plugin/gui"
-import { createMemo, createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js"
+import { createMemo, createSignal, For, onCleanup, onMount, Show, untrack, type JSX } from "solid-js"
 import { modelKey, type ModelKey, type Price } from "../types"
 import {
   addDays,
@@ -7,13 +7,13 @@ import {
   loadActivity,
   loadUsage,
   RANGES,
+  SESSION_LIMIT,
   startOfDay,
   type ActivityData,
   type Bucket,
   type RangeId,
   type Scope,
   type SessionInfo,
-  type Stats,
   type UsageData,
 } from "./api"
 import { LimitsView } from "./limits"
@@ -33,8 +33,8 @@ import {
   type Tokens,
 } from "./format"
 
-export type Metric = "cost" | "tokens"
-export type View = "usage" | "limits"
+type Metric = "cost" | "tokens"
+type View = "usage" | "limits"
 
 export interface Prefs {
   view: View
@@ -43,7 +43,7 @@ export interface Prefs {
   metric: Metric
 }
 
-export interface UsageViewProps {
+interface UsageViewProps {
   ctx: Context
   prefs: Prefs
   setPrefs: (patch: Partial<Prefs>) => void
@@ -53,7 +53,6 @@ export interface UsageViewProps {
 }
 
 const TOOL_LIMIT = 12
-const SESSION_LIMIT = 10
 
 interface Costed {
   /** Sum of the estimates that have a price. */
@@ -143,20 +142,21 @@ export function UsageView(props: UsageViewProps) {
   const directory = () => props.session()?.directory
   const scope = (): Scope => (props.prefs.scope === "project" && projectID() ? "project" : "all")
 
+  // The directory only routes the RPC, so switching sessions within a project does not reload.
   const usage = createLatest(
-    () => JSON.stringify({ range: props.prefs.range, project: scope() === "project" ? projectID() : undefined, directory: directory(), v: version() }),
+    () => JSON.stringify({ range: props.prefs.range, project: scope() === "project" ? projectID() : undefined, v: version() }),
     (key, signal) => {
-      const { range, project, directory } = JSON.parse(key) as { range: RangeId; project?: string; directory?: string }
-      return loadUsage(props.ctx, { range, project, directory }, signal)
+      const { range, project } = JSON.parse(key) as { range: RangeId; project?: string }
+      return loadUsage(props.ctx, { range, project, directory: untrack(directory) }, signal)
     },
   )
 
   // The past-year heatmap does not depend on the range, so it only reloads with the scope or a refresh.
   const activity = createLatest(
-    () => JSON.stringify({ project: scope() === "project" ? projectID() : undefined, directory: directory(), v: version() }),
+    () => JSON.stringify({ project: scope() === "project" ? projectID() : undefined, v: version() }),
     (key, signal) => {
-      const { project, directory } = JSON.parse(key) as { project?: string; directory?: string }
-      return loadActivity(props.ctx, { project, directory }, signal)
+      const { project } = JSON.parse(key) as { project?: string }
+      return loadActivity(props.ctx, { project, directory: untrack(directory) }, signal)
     },
   )
 

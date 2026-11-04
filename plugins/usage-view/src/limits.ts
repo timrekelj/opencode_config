@@ -11,7 +11,8 @@ const execFileAsync = promisify(execFile)
 /**
  * Subscription limits come from the providers, not from local history:
  * - Claude Code: GET https://api.anthropic.com/api/oauth/usage with the OAuth
- *   access token from the Claude credentials (refreshing it on 401/403).
+ *   access token from the Claude credentials. The token is Claude Code's own; it is never refreshed here, since
+ *   that could rotate the refresh token and sign Claude Code out.
  * - Codex: GET https://chatgpt.com/backend-api/wham/usage with the access
  *   token from ~/.codex/auth.json plus the ChatGPT account id from the JWT.
  *
@@ -20,12 +21,10 @@ const execFileAsync = promisify(execFile)
  */
 
 const MIN_INTERVAL_MS = 60_000
-const CLAUDE_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 const CLAUDE_BETA = "oauth-2025-04-20"
 
 interface ClaudeCredentials {
   accessToken: string
-  refreshToken?: string
   subscriptionType?: string
 }
 
@@ -61,26 +60,12 @@ async function claudeCredentials(): Promise<ClaudeCredentials | undefined> {
   if (!oauth?.accessToken) return undefined
   return {
     accessToken: oauth.accessToken,
-    refreshToken: oauth.refreshToken,
     subscriptionType: typeof oauth.subscriptionType === "string" ? oauth.subscriptionType : undefined,
   }
 }
 
-async function refreshClaudeToken(refreshToken: string): Promise<string | undefined> {
-  const response = await fetch("https://console.anthropic.com/v1/oauth/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      grant_type: "refresh_token",
-      client_id: CLAUDE_CLIENT_ID,
-      refresh_token: refreshToken,
-      redirect_uri: "https://console.anthropic.com/oauth/code/callback",
-    }),
-  })
-  if (!response.ok) return undefined
-  const body = await response.json()
-  return typeof body?.access_token === "string" ? body.access_token : undefined
-}
+/** Reset times to the minute, so one computed from a relative delay stays the same between checks. */
+const toMinute = (time: number) => Math.round(time / 60_000) * 60_000
 
 interface ClaudeWindow {
   utilization?: number
@@ -95,27 +80,19 @@ const CLAUDE_WINDOWS: { key: string; id: string; label: string; kind: LimitWindo
   { key: "seven_day_omelette", id: "weekly-design", label: "Weekly Claude Design", kind: "weekly" },
 ]
 
-async function fetchClaude(credentials: ClaudeCredentials): Promise<LimitProvider> {
-  let token = credentials.accessToken
-  const call = async () =>
-    fetch("https://api.anthropic.com/api/oauth/usage", {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "application/json",
-        "Content-Type": "application/json",
-        "anthropic-beta": CLAUDE_BETA,
-        "User-Agent": "claude-code/2.1.0",
-      },
-    })
-
-  let response = await call()
-  if ((response.status === 401 || response.status === 403) && credentials.refreshToken) {
-    // Access tokens live ~60 minutes; a fresh one also gets a fresh rate-limit bucket.
-    const fresh = await refreshClaudeToken(credentials.refreshToken)
-    if (fresh) {
-      token = fresh
-      response = await call()
-    }
+async function fetchClaude(credentials: ClaudeCredentials, signal: AbortSignal): Promise<LimitProvider> {
+  const response = await fetch("https://api.anthropic.com/api/oauth/usage", {
+    headers: {
+      Authorization: `Bearer ${credentials.accessToken}`,
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      "anthropic-beta": CLAUDE_BETA,
+      "User-Agent": "claude-code/2.1.0",
+    },
+    signal,
+  })
+  if (response.status === 401 || response.status === 403) {
+    throw new Error("Claude Code token expired; open Claude Code to refresh it")
   }
   if (response.status === 429) throw new Error("rate limited by Anthropic; try again in a few minutes")
   if (!response.ok) throw new Error(`Anthropic usage API returned ${response.status}`)
@@ -125,7 +102,7 @@ async function fetchClaude(credentials: ClaudeCredentials): Promise<LimitProvide
   for (const spec of CLAUDE_WINDOWS) {
     const raw = body?.[spec.key] as ClaudeWindow | null | undefined
     if (!raw || typeof raw.utilization !== "number") continue
-    const resetsAt = typeof raw.resets_at === "string" ? Date.parse(raw.resets_at) : NaN
+    const resetsAt = toMinute(typeof raw.resets_at === "string" ? Date.parse(raw.resets_at) : NaN)
     windows.push({
       id: spec.id,
       label: spec.label,
@@ -145,7 +122,6 @@ async function fetchClaude(credentials: ClaudeCredentials): Promise<LimitProvide
 interface CodexAuth {
   accessToken: string
   accountId?: string
-  planType?: string
 }
 
 function jwtPayload(token: string): any {
@@ -180,7 +156,7 @@ interface CodexWindow {
   reset_after_seconds?: number
 }
 
-async function fetchCodex(auth: CodexAuth): Promise<LimitProvider> {
+async function fetchCodex(auth: CodexAuth, signal: AbortSignal): Promise<LimitProvider> {
   if (!auth.accountId) throw new Error("no ChatGPT account id in the Codex credentials")
   const response = await fetch("https://chatgpt.com/backend-api/wham/usage", {
     headers: {
@@ -188,6 +164,7 @@ async function fetchCodex(auth: CodexAuth): Promise<LimitProvider> {
       "ChatGPT-Account-Id": auth.accountId,
       Accept: "application/json",
     },
+    signal,
   })
   if (!response.ok) throw new Error(`Codex usage API returned ${response.status}`)
   const body = await response.json()
@@ -196,7 +173,9 @@ async function fetchCodex(auth: CodexAuth): Promise<LimitProvider> {
   const push = (raw: CodexWindow | null | undefined, id: string, label: string, kind: LimitWindow["kind"]) => {
     if (!raw || typeof raw.used_percent !== "number") return
     const resetAtSec = raw.reset_at ?? raw.resets_at
-    const resetsAt = typeof resetAtSec === "number" ? resetAtSec * 1000 : typeof raw.reset_after_seconds === "number" ? Date.now() + raw.reset_after_seconds * 1000 : NaN
+    const resetsAt = toMinute(
+      typeof resetAtSec === "number" ? resetAtSec * 1000 : typeof raw.reset_after_seconds === "number" ? Date.now() + raw.reset_after_seconds * 1000 : NaN,
+    )
     const durationSec = raw.limit_window_seconds ?? (typeof raw.window_duration_mins === "number" ? raw.window_duration_mins * 60 : undefined)
     windows.push({
       id,
@@ -220,28 +199,49 @@ async function fetchCodex(auth: CodexAuth): Promise<LimitProvider> {
   }
 }
 
+const failed = (id: LimitProvider["id"], label: string, error: string): LimitProvider => ({ id, label, windows: [], error })
+
 export class Limits {
   private cache: { at: number; result: LimitsResult } | undefined
+  /** The check in flight, shared by concurrent callers, with the signal it runs under. */
+  private inflight: { promise: Promise<LimitsResult>; signal: AbortSignal } | undefined
 
   async limits(refresh: boolean, signal: AbortSignal): Promise<LimitsResult> {
     if (!refresh && this.cache && Date.now() - this.cache.at < MIN_INTERVAL_MS) return this.cache.result
-    const providers: LimitProvider[] = []
-    const run = async (id: "claude" | "codex", label: string, fn: () => Promise<LimitProvider>) => {
+    // A check already in flight started after the cache went stale, so it serves a refresh too.
+    let inflight = this.inflight
+    if (!inflight) {
+      const promise = this.check(signal).finally(() => {
+        if (this.inflight?.promise === promise) this.inflight = undefined
+      })
+      inflight = this.inflight = { promise, signal }
+    }
+    try {
+      return await inflight.promise
+    } catch (error) {
+      // The caller that started the shared check went away; check again for this one.
+      if (inflight.signal !== signal && inflight.signal.aborted && !signal.aborted) return this.limits(refresh, signal)
+      throw error
+    }
+  }
+
+  private async check(signal: AbortSignal): Promise<LimitsResult> {
+    const run = async (id: LimitProvider["id"], label: string, fn: () => Promise<LimitProvider>): Promise<LimitProvider> => {
       try {
-        providers.push(await fn())
+        return await fn()
       } catch (error) {
         if (signal.aborted) throw error
-        providers.push({ id, label, windows: [], error: error instanceof Error ? error.message : String(error) })
+        return failed(id, label, error instanceof Error ? error.message : String(error))
       }
     }
     const [claudeCreds, codex] = await Promise.all([claudeCredentials(), codexAuth()])
-    await Promise.all([
+    const providers = await Promise.all([
       claudeCreds
-        ? run("claude", "Claude Code", () => fetchClaude(claudeCreds))
-        : providers.push({ id: "claude", label: "Claude Code", windows: [], error: "not signed in (no Claude credentials found)" }),
+        ? run("claude", "Claude Code", () => fetchClaude(claudeCreds, signal))
+        : failed("claude", "Claude Code", "not signed in (no Claude credentials found)"),
       codex
-        ? run("codex", "Codex", () => fetchCodex(codex))
-        : providers.push({ id: "codex", label: "Codex", windows: [], error: "not signed in (no Codex credentials found)" }),
+        ? run("codex", "Codex", () => fetchCodex(codex, signal))
+        : failed("codex", "Codex", "not signed in (no Codex credentials found)"),
     ])
     const result: LimitsResult = { checkedAt: Date.now(), providers }
     this.cache = { at: Date.now(), result }

@@ -1,28 +1,30 @@
 import type { Context } from "@opencode/plugin/gui"
 import { createLatest } from "@opencode/plugin/gui"
 import { createSignal, For, Show } from "solid-js"
-import type { LimitProvider, LimitsResult } from "../types"
+import type { LimitProvider } from "../types"
 import { errorMessage, loadLimits } from "./api"
 import { ago, percent, until } from "./format"
 
 export function LimitsView(props: { ctx: Context; directory: () => string | undefined }) {
   const ui = props.ctx.ui
   const [version, setVersion] = createSignal(0)
-  const [refreshing, setRefreshing] = createSignal(false)
+  /** Set by the refresh button and taken by the next load, so only that load bypasses the cache. */
+  let force = false
 
   const limits = createLatest(
     () => JSON.stringify({ directory: props.directory(), v: version() }),
     (key, signal) => {
       const { directory } = JSON.parse(key) as { directory?: string }
-      return loadLimits(props.ctx, { directory, refresh: refreshing() }, signal)
+      const refresh = force
+      force = false
+      return loadLimits(props.ctx, { directory, refresh }, signal)
     },
   )
 
   const data = () => limits.latest
   const refresh = () => {
-    setRefreshing(true)
+    force = true
     setVersion((v) => v + 1)
-    setRefreshing(false)
   }
 
   return (
@@ -142,5 +144,3 @@ function ProviderCard(props: { provider: LimitProvider }) {
     </div>
   )
 }
-
-export type { LimitsResult }

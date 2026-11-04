@@ -1,6 +1,6 @@
 import { modelKey, type ModelKey, type Price, type PricesResult } from "./types"
 
-export const MODELS_DEV_URL = "https://models.dev/api.json"
+const MODELS_DEV_URL = "https://models.dev/api.json"
 const TTL_MS = 6 * 60 * 60 * 1000
 const FAILURE_RETRY_MS = 60 * 1000
 
@@ -47,14 +47,14 @@ const paid = (price: Price | null) => !!price && (price.input > 0 || price.outpu
  * Maps a model, keyed by `provider/id` or bare `id`, to the model id it stands for. Lets bare family names such as
  * `claude-agent/opus` be priced once the user says which generation they resolve to.
  */
-export type Aliases = Record<string, string>
+type Aliases = Record<string, string>
 
 export const parseAliases = (value: unknown): Aliases =>
   value && typeof value === "object"
     ? Object.fromEntries(Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === "string"))
     : {}
 
-export function lookup(catalog: Catalog, model: ModelKey, aliases: Aliases = {}): Price | null {
+function lookup(catalog: Catalog, model: ModelKey, aliases: Aliases = {}): Price | null {
   const target = aliases[modelKey(model)] ?? aliases[model.id]
   if (target) return lookup(catalog, { providerID: model.providerID, id: target })
   const own = catalog[model.providerID]?.models

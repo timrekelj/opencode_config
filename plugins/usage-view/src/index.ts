@@ -74,7 +74,7 @@ export default Plugin.define({
         }),
       ),
       limits: handle<{ refresh?: boolean }>((i, signal) => limits.limits(i?.refresh === true, signal)),
-    } as any)
+    })
 
     const mine = shared
     return () => {

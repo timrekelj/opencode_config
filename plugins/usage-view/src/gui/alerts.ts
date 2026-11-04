@@ -8,7 +8,7 @@ const CHECK_MS = 5 * 60 * 1000
 const FIRST_CHECK_MS = 20 * 1000
 const DEFAULT_THRESHOLDS = [80, 95]
 
-export interface Alert {
+interface Alert {
   /** One key per window, threshold and reset, so each crossing warns once. */
   key: string
   title: string
@@ -25,6 +25,7 @@ export function parseThresholds(value: unknown): number[] {
 /** The windows at or past a threshold, each with only the highest threshold it crossed. */
 export function alertsFor(result: LimitsResult, thresholds: number[]): Alert[] {
   const alerts: Alert[] = []
+  const highest = thresholds.at(-1)
   for (const provider of result.providers) {
     if (provider.error) continue
     for (const window of provider.windows) {
@@ -35,7 +36,7 @@ export function alertsFor(result: LimitsResult, thresholds: number[]): Alert[] {
         key: `${provider.id}:${window.id}:${window.resetsAt ?? "none"}:${crossed}`,
         title: `${provider.label}: ${Math.round(window.usedPercent)}% of ${window.label} used`,
         description: window.resetsAt ? `${left} left, resets ${until(window.resetsAt)}.` : `${left} left.`,
-        danger: crossed >= 95 || window.usedPercent >= 100,
+        danger: crossed === highest || window.usedPercent >= 100,
       })
     }
   }

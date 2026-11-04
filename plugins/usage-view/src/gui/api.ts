@@ -58,8 +58,10 @@ const HOUR = 60 * 60 * 1000
 const DAY = 24 * HOUR
 const SESSION_PAGE = 200
 const SESSION_PAGES = 10
+/** Top sessions shown, and priced. */
+export const SESSION_LIMIT = 10
 /** The heatmap shows up to 53 weeks; a spare week covers the Sunday alignment of the first column. */
-export const ACTIVITY_DAYS = 54 * 7
+const ACTIVITY_DAYS = 54 * 7
 
 export const timezone = () => {
   try {
@@ -81,7 +83,7 @@ export const addDays = (time: number, days: number) => {
 const fmtDay = (time: number, opts: Intl.DateTimeFormatOptions) => new Date(time).toLocaleDateString(undefined, opts)
 const fmtHour = (time: number) => new Date(time).toLocaleTimeString(undefined, { hour: "numeric" })
 
-export function rangeStart(range: RangeId, now = Date.now()): number | undefined {
+function rangeStart(range: RangeId, now = Date.now()): number | undefined {
   const today = startOfDay(now)
   if (range === "today") return today
   if (range === "7d") return addDays(today, -6)
@@ -89,7 +91,7 @@ export function rangeStart(range: RangeId, now = Date.now()): number | undefined
   return undefined
 }
 
-export function makeBuckets(range: RangeId, now: number, earliest: number): Omit<Bucket, "stats">[] {
+function makeBuckets(range: RangeId, now: number, earliest: number): Omit<Bucket, "stats">[] {
   const today = startOfDay(now)
   if (range === "today") {
     const d = new Date(today)
@@ -223,7 +225,7 @@ export async function loadLimits(
 }
 
 /** Adds the usage of deleted sessions to OpenCode's stats for the same range. */
-export function addRetained(stats: Stats, extra: RetainedRange | undefined): Stats {
+function addRetained(stats: Stats, extra: RetainedRange | undefined): Stats {
   if (!extra || extra.steps === 0) return stats
   const add = <T extends Tokens>(a: T, b: Tokens): T => ({
     ...a,
@@ -265,20 +267,18 @@ export async function loadUsage(
   const tz = timezone()
   const base = { project: input.project, timezone: tz }
 
-  const [liveTotals, list] = await Promise.all([
-    client.session.stats({ ...base, from, to: now, tools: "detail" }, { signal }),
-    listSessions(client, input.project, from, signal),
-  ])
-
-  const directory = input.directory ?? list.sessions[0]?.location.directory
+  const listed = listSessions(client, input.project, from, signal)
+  // The RPC is answered per location; without a session, borrow the directory of a listed one.
+  const rpcOptions = (input.directory ? Promise.resolve(input.directory) : listed.then((l) => l.sessions[0]?.location.directory)).then(
+    (directory) => (directory ? { location: { directory }, signal } : { signal }),
+  )
   const rpc = client.rpc(UsageView) as unknown as UsageRpc
-  const rpcOptions = directory ? { location: { directory }, signal } : { signal }
 
   // Deleted sessions are optional extra data: a failure here must not break the view.
   let retainedError: string | undefined
   const retained = async (ranges: { from?: number; to: number }[]) => {
     try {
-      return await rpc.retained({ ranges, project: input.project }, rpcOptions)
+      return await rpc.retained({ ranges, project: input.project }, await rpcOptions)
     } catch (error) {
       if (signal.aborted) throw error
       retainedError = errorMessage(error)
@@ -290,23 +290,31 @@ export async function loadUsage(
   const addExtra = (stats: Stats, result: RetainedResult | undefined, index: number) =>
     addRetained(addRetained(stats, result?.ranges[index]), result?.adopted?.[index])
 
-  const retainedTotal = await retained([{ from, to: now }])
+  const loadBuckets = (shells: Omit<Bucket, "stats">[], withRetained: boolean) =>
+    Promise.all([
+      Promise.all(
+        shells.map((bucket) =>
+          bucket.from > now
+            ? undefined
+            : client.session.stats({ ...base, from: bucket.from, to: Math.min(bucket.to, now), tools: "none" }, { signal }),
+        ),
+      ),
+      withRetained ? retained(shells.map((bucket) => ({ from: bucket.from, to: Math.min(bucket.to, now) }))) : undefined,
+    ])
+
+  // Only "all" needs the earliest usage to lay out its buckets; the other ranges load them alongside the totals.
+  const known = input.range === "all" ? undefined : makeBuckets(input.range, now, now)
+  const [liveTotals, list, retainedTotal, knownBuckets] = await Promise.all([
+    client.session.stats({ ...base, from, to: now, tools: "detail" }, { signal }),
+    listed,
+    retained([{ from, to: now }]),
+    known && loadBuckets(known, true),
+  ])
   const earliest = Math.min(liveTotals.range.from || now, retainedTotal?.earliest ?? now)
   const totals = addExtra(liveTotals, retainedTotal, 0)
 
-  const shells = makeBuckets(input.range, now, earliest)
-  const [bucketStats, retainedBuckets] = await Promise.all([
-    Promise.all(
-      shells.map((bucket) =>
-        bucket.from > now
-          ? undefined
-          : client.session.stats({ ...base, from: bucket.from, to: Math.min(bucket.to, now), tools: "none" }, { signal }),
-      ),
-    ),
-    retainedTotal?.earliest === undefined
-      ? undefined
-      : retained(shells.map((bucket) => ({ from: bucket.from, to: Math.min(bucket.to, now) }))),
-  ])
+  const shells = known ?? makeBuckets(input.range, now, earliest)
+  const [bucketStats, retainedBuckets] = knownBuckets ?? (await loadBuckets(shells, retainedTotal?.earliest !== undefined))
   const buckets: Bucket[] = shells.map((bucket, index) => {
     const stats = bucketStats[index]
     return stats ? { ...bucket, stats: addExtra(stats, retainedBuckets, index) } : bucket
@@ -322,13 +330,13 @@ export async function loadUsage(
   }
   totals.models.forEach((m) => addModel(m.model))
   buckets.forEach((b) => b.stats?.models.forEach((m) => addModel(m.model)))
-  sessions.slice(0, 50).forEach((s) => addModel(s.model))
+  sessions.slice(0, SESSION_LIMIT).forEach((s) => addModel(s.model))
 
   let prices: Record<string, Price | null> = {}
   let pricesError: string | undefined
   if (models.size > 0) {
     try {
-      const result = await rpc.prices({ models: [...models.values()] }, rpcOptions)
+      const result = await rpc.prices({ models: [...models.values()] }, await rpcOptions)
       prices = result.prices
     } catch (error) {
       if (signal.aborted) throw error

@@ -83,6 +83,46 @@ function addRow(target: { steps: number; cost: number; tokens: TokenTotals }, ro
   target.cost += row[9]
 }
 
+/** Per-model usage columns over `session_message m`, to group by slot, provider and model. */
+const USAGE_COLUMNS = `(m.time_created / ${SLOT_MS}) * ${SLOT_MS} AS slot,
+  json_extract(m.data, '$.model.providerID') AS provider,
+  json_extract(m.data, '$.model.id') AS model,
+  count(*) AS steps,
+  sum(coalesce(json_extract(m.data, '$.tokens.input'), 0)) AS input,
+  sum(coalesce(json_extract(m.data, '$.tokens.output'), 0)) AS output,
+  sum(coalesce(json_extract(m.data, '$.tokens.reasoning'), 0)) AS reasoning,
+  sum(coalesce(json_extract(m.data, '$.tokens.cache.read'), 0)) AS cache_read,
+  sum(coalesce(json_extract(m.data, '$.tokens.cache.write'), 0)) AS cache_write,
+  sum(coalesce(json_extract(m.data, '$.cost'), 0)) AS cost`
+
+/** A result row of USAGE_COLUMNS as a Row, or undefined when the message has no model. */
+function toRow(r: any): Row | undefined {
+  if (typeof r.provider !== "string" || typeof r.model !== "string") return undefined
+  return [
+    Number(r.slot),
+    r.provider,
+    r.model,
+    Number(r.steps),
+    Number(r.input),
+    Number(r.output),
+    Number(r.reasoning),
+    Number(r.cache_read),
+    Number(r.cache_write),
+    Number(r.cost),
+  ]
+}
+
+/** The row's model in `models`, added empty if missing. */
+function modelBucket(models: Map<string, RetainedModel>, row: Row): RetainedModel {
+  const key = `${row[1]}/${row[2]}`
+  let model = models.get(key)
+  if (!model) {
+    model = { model: { providerID: row[1], id: row[2] }, steps: 0, cost: 0, tokens: emptyTokens() }
+    models.set(key, model)
+  }
+  return model
+}
+
 const isEntry = (value: unknown): value is Entry =>
   typeof value === "object" &&
   value !== null &&
@@ -128,11 +168,14 @@ export class Ledger {
   private deleted = new Map<string, Entry>()
   /** Parent and project of every session in OpenCode's database, as of the last sync. */
   private sessions = new Map<string, SessionRef>()
+  /** adoptedIDs per project, for the current `sessions`. */
+  private adopted = new Map<string, string[]>()
   private loaded: Promise<void> | undefined
   private running: Promise<void> | undefined
   private pending = false
   private timer: ReturnType<typeof setTimeout> | undefined
   private lastRun = 0
+  private stopped = false
 
   constructor(
     private readonly storage: Storage,
@@ -165,6 +208,7 @@ export class Ledger {
 
   /** Syncs soon, at most once every couple of seconds. */
   schedule() {
+    if (this.stopped) return
     if (this.running) {
       this.pending = true
       return
@@ -189,8 +233,20 @@ export class Ledger {
     return this.running
   }
 
+  /** Joins a running sync, or skips one when the last just finished and nothing changed since; otherwise syncs. */
+  private fresh(): Promise<void> {
+    if (this.running) return this.running
+    if (this.db && !this.timer && Date.now() - this.syncedAt < MIN_INTERVAL_MS) return Promise.resolve()
+    if (this.timer) {
+      clearTimeout(this.timer)
+      this.timer = undefined
+    }
+    return this.sync()
+  }
+
   private async run() {
     await this.load()
+    if (this.stopped) return
     if (!this.db) {
       if (!existsSync(this.path)) throw new Error(`OpenCode database not found at ${this.path}`)
       this.db = await openDatabase(this.path)
@@ -200,25 +256,19 @@ export class Ledger {
     const startedAt = Date.now()
     const since = this.syncedAt > 0 ? this.syncedAt - SLACK_MS : 0
 
-    // Re-aggregate every session with a message written since the last sync.
+    // Re-aggregate every session with a message written since the last sync. time_updated has no index, so this
+    // scans session_message; OpenCode's database is not ours to add one to.
+    const touched: string[] = db
+      .all("SELECT DISTINCT session_id AS id FROM session_message WHERE time_updated >= ?", since)
+      .map((r) => r.id)
     const rows = db.all(
-      `SELECT m.session_id AS session, s.project_id AS project, s.parent_id AS parent,
-         (m.time_created / ${SLOT_MS}) * ${SLOT_MS} AS slot,
-         json_extract(m.data, '$.model.providerID') AS provider,
-         json_extract(m.data, '$.model.id') AS model,
-         count(*) AS steps,
-         sum(coalesce(json_extract(m.data, '$.tokens.input'), 0)) AS input,
-         sum(coalesce(json_extract(m.data, '$.tokens.output'), 0)) AS output,
-         sum(coalesce(json_extract(m.data, '$.tokens.reasoning'), 0)) AS reasoning,
-         sum(coalesce(json_extract(m.data, '$.tokens.cache.read'), 0)) AS cache_read,
-         sum(coalesce(json_extract(m.data, '$.tokens.cache.write'), 0)) AS cache_write,
-         sum(coalesce(json_extract(m.data, '$.cost'), 0)) AS cost
+      `SELECT m.session_id AS session, s.project_id AS project, s.parent_id AS parent, ${USAGE_COLUMNS}
        FROM session_message m JOIN session_v2 s ON s.id = m.session_id
        WHERE m.type = 'assistant'
          AND json_extract(m.data, '$.tokens') IS NOT NULL
-         AND m.session_id IN (SELECT DISTINCT session_id FROM session_message WHERE time_updated >= ?)
+         AND m.session_id IN (SELECT value FROM json_each(?))
        GROUP BY m.session_id, slot, provider, model`,
-      since,
+      JSON.stringify(touched),
     )
 
     this.sessions = new Map(
@@ -226,10 +276,12 @@ export class Ledger {
         .all("SELECT id, parent_id AS parent, project_id AS project FROM session_v2")
         .map((r) => [r.id, { parent: r.parent ?? null, project: String(r.project) }]),
     )
+    this.adopted.clear()
 
     const changed = new Map<string, Entry>()
     for (const r of rows) {
-      if (typeof r.provider !== "string" || typeof r.model !== "string") continue
+      const row = toRow(r)
+      if (!row) continue
       let entry = changed.get(r.session)
       if (!entry) {
         const projectID = String(r.project)
@@ -238,23 +290,18 @@ export class Ledger {
         if (root && root !== projectID) entry.rootProjectID = root
         changed.set(r.session, entry)
       }
-      entry.rows.push([
-        Number(r.slot),
-        r.provider,
-        r.model,
-        Number(r.steps),
-        Number(r.input),
-        Number(r.output),
-        Number(r.reasoning),
-        Number(r.cache_read),
-        Number(r.cache_write),
-        Number(r.cost),
-      ])
+      entry.rows.push(row)
     }
     for (const [id, entry] of changed) {
       await this.storage.set(PREFIX + id, entry)
       this.live.add(id)
       this.deleted.delete(id)
+    }
+    // A session whose messages changed but left no usage (e.g. reverted) has nothing to keep.
+    for (const id of touched) {
+      if (changed.has(id) || !this.live.has(id)) continue
+      await this.storage.remove(PREFIX + id)
+      this.live.delete(id)
     }
 
     for (const id of [...this.live]) {
@@ -308,10 +355,13 @@ export class Ledger {
    * in a directory whose parent session began as a global one).
    */
   private adoptedIDs(project: string): string[] {
-    const ids: string[] = []
+    let ids = this.adopted.get(project)
+    if (ids) return ids
+    ids = []
     for (const [id, session] of this.sessions) {
       if (session.parent && session.project !== project && this.rootProject(id) === project) ids.push(id)
     }
+    this.adopted.set(project, ids)
     return ids
   }
 
@@ -320,17 +370,7 @@ export class Ledger {
     const entries = new Map<string, Entry>()
     if (ids.length === 0 || !this.db) return entries
     const rows = this.db.all(
-      `SELECT m.session_id AS session,
-         (m.time_created / ${SLOT_MS}) * ${SLOT_MS} AS slot,
-         json_extract(m.data, '$.model.providerID') AS provider,
-         json_extract(m.data, '$.model.id') AS model,
-         count(*) AS steps,
-         sum(coalesce(json_extract(m.data, '$.tokens.input'), 0)) AS input,
-         sum(coalesce(json_extract(m.data, '$.tokens.output'), 0)) AS output,
-         sum(coalesce(json_extract(m.data, '$.tokens.reasoning'), 0)) AS reasoning,
-         sum(coalesce(json_extract(m.data, '$.tokens.cache.read'), 0)) AS cache_read,
-         sum(coalesce(json_extract(m.data, '$.tokens.cache.write'), 0)) AS cache_write,
-         sum(coalesce(json_extract(m.data, '$.cost'), 0)) AS cost
+      `SELECT m.session_id AS session, ${USAGE_COLUMNS}
        FROM session_message m
        WHERE m.type = 'assistant'
          AND json_extract(m.data, '$.tokens') IS NOT NULL
@@ -339,25 +379,15 @@ export class Ledger {
       JSON.stringify(ids),
     )
     for (const r of rows) {
-      if (typeof r.provider !== "string" || typeof r.model !== "string") continue
+      const row = toRow(r)
+      if (!row) continue
       let entry = entries.get(r.session)
       if (!entry) {
         const session = this.sessions.get(r.session)
         entry = { projectID: session?.project ?? "", parentID: session?.parent ?? null, deletedAt: null, rows: [] }
         entries.set(r.session, entry)
       }
-      entry.rows.push([
-        Number(r.slot),
-        r.provider,
-        r.model,
-        Number(r.steps),
-        Number(r.input),
-        Number(r.output),
-        Number(r.reasoning),
-        Number(r.cache_read),
-        Number(r.cache_write),
-        Number(r.cost),
-      ])
+      entry.rows.push(row)
     }
     return entries
   }
@@ -367,7 +397,7 @@ export class Ledger {
    * that belong to it through their root session but are filed under another project.
    */
   async retained(input: { ranges: { from?: number; to: number }[]; project?: string }): Promise<RetainedResult> {
-    await this.sync()
+    await this.fresh()
     const project = input.project
     const deleted = [...this.deleted].filter(([, entry]) => Ledger.inProject(entry, project))
     const adopted = project ? [...this.liveEntries(this.adoptedIDs(project))] : []
@@ -396,13 +426,7 @@ export class Ledger {
           if ((range.from !== undefined && row[0] < range.from) || row[0] >= range.to) return
           const target = ranges[index]!
           addRow(target, row)
-          const key = `${row[1]}/${row[2]}`
-          let model = target.byModel.get(key)
-          if (!model) {
-            model = { model: { providerID: row[1], id: row[2] }, steps: 0, cost: 0, tokens: emptyTokens() }
-            target.byModel.set(key, model)
-          }
-          addRow(model, row)
+          addRow(modelBucket(target.byModel, row), row)
           if (!target.ids.has(id)) {
             target.ids.add(id)
             if (entry.parentID) target.subagents++
@@ -419,10 +443,10 @@ export class Ledger {
 
   /**
    * Usage per local day in `[from, to)`, optionally limited to one project. Live sessions are read from OpenCode's
-   * database in hour slots; deleted ones come from the ledger. Days without usage are left out.
+   * database in quarter-hour slots; deleted ones come from the ledger. Days without usage are left out.
    */
   async daily(input: { from: number; to: number; project?: string; timezone?: string }): Promise<DailyResult> {
-    await this.sync()
+    await this.fresh()
     const db = this.db
     if (!db) throw new Error("OpenCode database is not open")
     const dayOf = dayFormatter(input.timezone)
@@ -434,27 +458,11 @@ export class Ledger {
         models = new Map()
         days.set(date, models)
       }
-      const key = `${row[1]}/${row[2]}`
-      let model = models.get(key)
-      if (!model) {
-        model = { model: { providerID: row[1], id: row[2] }, steps: 0, cost: 0, tokens: emptyTokens() }
-        models.set(key, model)
-      }
-      addRow(model, row)
+      addRow(modelBucket(models, row), row)
     }
 
-    const HOUR_MS = 60 * 60 * 1000
     const rows = db.all(
-      `SELECT (m.time_created / ${HOUR_MS}) * ${HOUR_MS} AS slot,
-         json_extract(m.data, '$.model.providerID') AS provider,
-         json_extract(m.data, '$.model.id') AS model,
-         count(*) AS steps,
-         sum(coalesce(json_extract(m.data, '$.tokens.input'), 0)) AS input,
-         sum(coalesce(json_extract(m.data, '$.tokens.output'), 0)) AS output,
-         sum(coalesce(json_extract(m.data, '$.tokens.reasoning'), 0)) AS reasoning,
-         sum(coalesce(json_extract(m.data, '$.tokens.cache.read'), 0)) AS cache_read,
-         sum(coalesce(json_extract(m.data, '$.tokens.cache.write'), 0)) AS cache_write,
-         sum(coalesce(json_extract(m.data, '$.cost'), 0)) AS cost
+      `SELECT ${USAGE_COLUMNS}
        FROM session_message m JOIN session_v2 s ON s.id = m.session_id
        WHERE m.type = 'assistant'
          AND json_extract(m.data, '$.tokens') IS NOT NULL
@@ -466,19 +474,8 @@ export class Ledger {
         : [input.from, input.to]),
     )
     for (const r of rows) {
-      if (typeof r.provider !== "string" || typeof r.model !== "string") continue
-      add([
-        Number(r.slot),
-        r.provider,
-        r.model,
-        Number(r.steps),
-        Number(r.input),
-        Number(r.output),
-        Number(r.reasoning),
-        Number(r.cache_read),
-        Number(r.cache_write),
-        Number(r.cost),
-      ])
+      const row = toRow(r)
+      if (row) add(row)
     }
     for (const entry of this.deleted.values()) {
       if (!Ledger.inProject(entry, input.project)) continue
@@ -504,11 +501,19 @@ export class Ledger {
     })()
     const backstop = setInterval(() => this.schedule(), BACKSTOP_MS)
     return () => {
+      this.stopped = true
+      this.pending = false
       controller.abort()
       clearInterval(backstop)
       if (this.timer) clearTimeout(this.timer)
-      this.db?.close()
-      this.db = undefined
+      this.timer = undefined
+      // A running sync still uses the database; close it once that sync is done.
+      const close = () => {
+        this.db?.close()
+        this.db = undefined
+      }
+      if (this.running) void this.running.catch(() => {}).finally(close)
+      else close()
     }
   }
 }
