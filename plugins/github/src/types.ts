@@ -61,7 +61,6 @@ export interface Graph {
 export interface RepoInfo {
   nameWithOwner: string
   url: string
-  defaultBranch: string
   viewer: string
 }
 
@@ -106,7 +105,6 @@ export type TimelineItem =
   | { kind: "commit"; id: string; author: string; createdAt: string; message: string }
 
 export interface PrDetail extends PrSummary {
-  id: string
   /** The signed-in GitHub user, so the panel can tell the author's own pull request apart. */
   viewer: string
   body: string
@@ -115,7 +113,6 @@ export interface PrDetail extends PrSummary {
   mergeable: string
   mergeStateStatus: string
   changedFiles: number
-  crossRepository: boolean
   checkList: Check[]
   reviewers: Reviewer[]
   timeline: TimelineItem[]

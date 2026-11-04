@@ -18,7 +18,7 @@ const agoUnix = (time: number) => ago(new Date(time * 1000).toISOString())
 /** Command-palette and composer-pill flows, shared with the panel. */
 
 /** Checks out a branch row: locals via `git checkout`, remotes via a new local tracking branch (never detached). */
-export async function switchTo(app: App, dir: string, b: BranchInfo) {
+async function switchTo(app: App, dir: string, b: BranchInfo) {
   if (b.current) return
   if (b.remote) {
     const local = b.name.slice(b.name.indexOf("/") + 1)
@@ -105,18 +105,18 @@ export function BranchesView(props: { app: App; session: MountedSession }) {
 
   const refresh = () => setVersion((v) => v + 1)
 
-  const repo = createLatest(() => `${dir()}\n${version()}\n${props.app.branchTick()}`, (key) =>
-    props.app.git.repo(key.split("\n")[0]),
+  const repo = createLatest(() => `${dir()}\n${version()}\n${props.app.branchTick()}`, (key, signal) =>
+    props.app.git.repo(key.split("\n")[0], signal),
   )
   const branches = createLatest(
     () => `${dir()}\n${version()}\n${props.app.branchTick()}`,
-    (key) => props.app.git.branches(key.split("\n")[0]),
+    (key, signal) => props.app.git.branches(key.split("\n")[0], signal),
   )
   const graph = createLatest(
     () => (branches.latest && !branches.error ? `${dir()}\n${scope()}\n${version()}\n${props.app.branchTick()}` : undefined),
-    (key) => {
+    (key, signal) => {
       const [d, s] = key.split("\n")
-      return props.app.git.graph(d, s as GraphScope, props.app.graphLimit)
+      return props.app.git.graph(d, s as GraphScope, props.app.graphLimit, signal)
     },
   )
 
@@ -132,20 +132,23 @@ export function BranchesView(props: { app: App; session: MountedSession }) {
     })
   })
 
-  const filteredCommits = createMemo(() => {
+  // The graph is laid out over the full history; a search lists the matching rows without it, as their lanes
+  // wouldn't connect.
+  const layout = createMemo(() => layoutGraph(graph.latest?.commits ?? []))
+  const searching = () => query().trim() !== ""
+
+  const filteredRows = createMemo(() => {
     const q = query().trim().toLowerCase()
-    const list = graph.latest?.commits ?? []
-    if (!q) return list
-    return list.filter(
-      (c) =>
+    const rows = layout().rows
+    if (!q) return rows
+    return rows.filter(
+      ({ commit: c }) =>
         c.subject.toLowerCase().includes(q) ||
         c.hash.startsWith(q) ||
         c.author.toLowerCase().includes(q) ||
         c.refs.some((r) => r.toLowerCase().includes(q)),
     )
   })
-
-  const layout = createMemo(() => layoutGraph(filteredCommits()))
 
   const failure = () => repo.error ?? branches.error
   const loading = () => repo.loading || branches.loading
@@ -164,10 +167,7 @@ export function BranchesView(props: { app: App; session: MountedSession }) {
     void switchTo(props.app, dir(), b)
   }
 
-  const newBranch = async () => {
-    await newBranchFlow(props.app, props.session)
-    refresh()
-  }
+  const newBranch = () => newBranchFlow(props.app, props.session)
 
   const renameBranch = async (b: BranchInfo) => {
     const name = await ctx.dialogs.prompt({ title: `Rename ${b.name}`, value: b.name, placeholder: "new-name" })
@@ -363,7 +363,7 @@ export function BranchesView(props: { app: App; session: MountedSession }) {
           <section class="gg-section">
             <div class="gg-section-title">
               History
-              <span class="prr-count">{filteredCommits().length}</span>
+              <span class="prr-count">{filteredRows().length}</span>
               <span class="prr-spacer" />
               <span class="gg-tabs">
                 <For each={SCOPES}>
@@ -386,41 +386,43 @@ export function BranchesView(props: { app: App; session: MountedSession }) {
             <Show when={!graph.error && graph.latest === undefined}>
               <div class="prr-empty"><ui.Loader /></div>
             </Show>
-            <Show when={graph.latest && layout().rows.length === 0}>
+            <Show when={graph.latest && filteredRows().length === 0}>
               <div class="prr-empty prr-muted">No commits{query() ? " match your search" : ""}.</div>
             </Show>
-            <Show when={graph.latest && layout().rows.length > 0}>
+            <Show when={graph.latest && filteredRows().length > 0}>
               <div class="gg-graph">
-                <svg class="gg-svg" width={layout().width} height={layout().height}>
-                  <For each={layout().verticals}>
-                    {(v) => (
-                      <line
-                        x1={layout().x(v.lane)}
-                        y1={layout().y(v.fromRow)}
-                        x2={layout().x(v.lane)}
-                        y2={layout().y(v.toRow)}
-                        stroke={laneColor(v.lane)}
-                        class="gg-line"
-                      />
-                    )}
-                  </For>
-                  <For each={layout().edges}>
-                    {(e) => <path d={edgePath(layout(), e)} stroke={laneColor(e.fromLane)} fill="none" class="gg-line" />}
-                  </For>
-                  <For each={layout().rows}>
-                    {(r) => (
-                      <circle
-                        cx={layout().x(r.lane)}
-                        cy={layout().y(r.index)}
-                        r={r.commit.head ? 4.5 : 3.5}
-                        fill={laneColor(r.lane)}
-                        class={r.commit.head ? "gg-dot gg-dot-head" : "gg-dot"}
-                      />
-                    )}
-                  </For>
-                </svg>
+                <Show when={!searching()}>
+                  <svg class="gg-svg" width={layout().width} height={layout().height}>
+                    <For each={layout().verticals}>
+                      {(v) => (
+                        <line
+                          x1={layout().x(v.lane)}
+                          y1={layout().y(v.fromRow)}
+                          x2={layout().x(v.lane)}
+                          y2={layout().y(v.toRow)}
+                          stroke={laneColor(v.lane)}
+                          class="gg-line"
+                        />
+                      )}
+                    </For>
+                    <For each={layout().edges}>
+                      {(e) => <path d={edgePath(layout(), e)} stroke={laneColor(e.fromLane)} fill="none" class="gg-line" />}
+                    </For>
+                    <For each={layout().rows}>
+                      {(r) => (
+                        <circle
+                          cx={layout().x(r.lane)}
+                          cy={layout().y(r.index)}
+                          r={r.commit.head ? 4.5 : 3.5}
+                          fill={laneColor(r.lane)}
+                          class={r.commit.head ? "gg-dot gg-dot-head" : "gg-dot"}
+                        />
+                      )}
+                    </For>
+                  </svg>
+                </Show>
                 <div class="gg-rows">
-                  <For each={layout().rows}>
+                  <For each={filteredRows()}>
                     {(r) => (
                       <div class="gg-row" style={{ height: `${ROW_H}px` }}>
                         <span class="gg-row-main prr-ellipsis" title={r.commit.subject}>
@@ -460,11 +462,13 @@ function CommitDialog(props: { app: App; dir: string; commit: GraphCommit; dialo
       size="large"
       footer={<ui.Button onClick={props.dialog.close}>Close</ui.Button>}
     >
-      <Show when={error()}>{(e) => <div class="prr-error">{e()}</div>}</Show>
-      <Show when={!error() && text() === undefined}>
-        <ui.Loader />
-      </Show>
-      <Show when={text()}>{(t) => <pre class="gg-pre prr-mono">{t()}</pre>}</Show>
+      <div class="prr-dialog">
+        <Show when={error()}>{(e) => <div class="prr-error">{e()}</div>}</Show>
+        <Show when={!error() && text() === undefined}>
+          <ui.Loader />
+        </Show>
+        <Show when={text()}>{(t) => <pre class="gg-pre prr-mono">{t()}</pre>}</Show>
+      </div>
     </ui.Dialog>
   )
 }

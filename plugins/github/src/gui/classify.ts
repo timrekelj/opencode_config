@@ -1,7 +1,7 @@
 import type { IconName } from "@opencode/plugin/gui"
 import { errorMessage } from "./api"
 
-export type ErrorKind =
+type ErrorKind =
   | "unavailable"
   | "gh_missing"
   | "git_missing"
@@ -15,7 +15,7 @@ export type ErrorKind =
   | "network"
   | "unknown"
 
-export interface FriendlyError {
+interface FriendlyError {
   kind: ErrorKind
   icon: IconName
   title: string
@@ -110,17 +110,7 @@ export function describeError(error: unknown, directory?: string): FriendlyError
       hint: `Pull requests come from the session's folder${where}. Open a session inside a GitHub repository to review its pull requests.`,
       retry: false,
     }
-  if (type === "gh_failed" && /not a git repository/i.test(raw)) {
-    return {
-      ...base,
-      kind: "not_git",
-      icon: "folder",
-      title: "This folder isn't a git repository",
-      hint: `Branches and pull requests come from the session's folder${where}. Open a session inside a git repository.`,
-      retry: false,
-    }
-  }
-  if (/no git remotes|none of the git remotes|could not find any remote|no remote/i.test(raw))
+  if (/no git remotes|could not find any remote|no remote/i.test(raw))
     return {
       ...base,
       kind: "no_remote",

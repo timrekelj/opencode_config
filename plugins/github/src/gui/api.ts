@@ -18,24 +18,27 @@ import type {
 
 export type Api = ReturnType<typeof makeApi>
 
-/** One RPC caller per plugin context; reads ctx.client on every call, as it changes after the server restarts. */
+/**
+ * One RPC caller per plugin context; reads ctx.client on every call, as it changes after the server restarts.
+ * Reads take createLatest's `signal`, so a superseded request is cancelled instead of left running.
+ */
 function makeCaller(ctx: Pick<Context, "client">) {
-  return <T>(rpc: any, method: string, directory: string, input: object = {}) => {
+  return <T>(rpc: any, method: string, directory: string, input: object = {}, signal?: AbortSignal) => {
     const client = ctx.client.rpc(rpc) as unknown as Record<string, (input: object, options: object) => Promise<T>>
-    return client[method]({ directory, ...input }, { location: { directory } })
+    return client[method]({ directory, ...input }, { location: { directory }, signal })
   }
 }
 
 export function makeApi(ctx: Pick<Context, "client">) {
   const call = makeCaller(ctx)
-  const pr = <T>(method: keyof (typeof PrReview)["methods"], directory: string, input: object = {}) =>
-    call<T>(PrReview, method, directory, input)
+  const pr = <T>(method: keyof (typeof PrReview)["methods"], directory: string, input: object = {}, signal?: AbortSignal) =>
+    call<T>(PrReview, method, directory, input, signal)
 
   return {
-    repo: (dir: string) => pr<RepoInfo>("repo", dir),
-    list: (dir: string, state: ListState) => pr<PrSummary[]>("list", dir, { state }),
-    detail: (dir: string, number: number) => pr<PrDetail>("detail", dir, { number }),
-    files: (dir: string, number: number) => pr<PrFiles>("files", dir, { number }),
+    repo: (dir: string, signal?: AbortSignal) => pr<RepoInfo>("repo", dir, {}, signal),
+    list: (dir: string, state: ListState, signal?: AbortSignal) => pr<PrSummary[]>("list", dir, { state }, signal),
+    detail: (dir: string, number: number, signal?: AbortSignal) => pr<PrDetail>("detail", dir, { number }, signal),
+    files: (dir: string, number: number, signal?: AbortSignal) => pr<PrFiles>("files", dir, { number }, signal),
     current: (dir: string) => pr<CurrentPr | null>("current", dir),
     setViewed: (dir: string, number: number, path: string, viewed: boolean) =>
       pr<null>("setViewed", dir, { number, path, viewed }),
@@ -66,9 +69,10 @@ export function makeGitApi(ctx: Pick<Context, "client">) {
   const call = makeCaller(ctx)
 
   return {
-    repo: (dir: string) => call<RepoStatus>(Git, "repo", dir),
-    branches: (dir: string) => call<BranchInfo[]>(Git, "branches", dir),
-    graph: (dir: string, scope: GraphScope, limit: number) => call<Graph>(Git, "graph", dir, { scope, limit }),
+    repo: (dir: string, signal?: AbortSignal) => call<RepoStatus>(Git, "repo", dir, {}, signal),
+    branches: (dir: string, signal?: AbortSignal) => call<BranchInfo[]>(Git, "branches", dir, {}, signal),
+    graph: (dir: string, scope: GraphScope, limit: number, signal?: AbortSignal) =>
+      call<Graph>(Git, "graph", dir, { scope, limit }, signal),
     show: (dir: string, hash: string) => call<string>(Git, "show", dir, { hash }),
     checkout: (dir: string, ref: string) => call<string>(Git, "checkout", dir, { ref }),
     create: (dir: string, name: string, start: string) => call<string>(Git, "create", dir, { name, start }),

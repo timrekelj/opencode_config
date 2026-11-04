@@ -26,9 +26,9 @@ export function DetailView(props: { app: App; session: MountedSession; screen: S
   const dir = () => props.session.directory
   const detail = createLatest(
     () => `${dir()}\n${props.number}\n${version()}`,
-    async (key) => {
+    async (key, signal) => {
       const [d, n] = key.split("\n")
-      const result = await app.api.detail(d, Number(n))
+      const result = await app.api.detail(d, Number(n), signal)
       app.setTitle(prKey(d, result.number), result.title)
       return result
     },

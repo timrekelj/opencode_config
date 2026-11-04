@@ -1,4 +1,4 @@
-import type { IconName } from "@opencode/plugin/gui"
+import type { ComposerPillTone, IconName } from "@opencode/plugin/gui"
 import type { CheckState, PrSummary, Rollup } from "../types"
 
 export function ago(iso: string): string {
@@ -34,6 +34,10 @@ export const checkLabel = (state: Rollup): string =>
     neutral: "Checks neutral",
     none: "No checks",
   })[state]
+
+/** The composer pill tone for a check rollup; none for checks that are skipped, neutral or absent. */
+export const checkTone = (state: Rollup): ComposerPillTone | undefined =>
+  state === "failure" ? "danger" : state === "pending" ? "warning" : state === "success" ? "success" : undefined
 
 export const stateLabel = (pr: Pick<PrSummary, "state" | "draft">) =>
   pr.state === "MERGED" ? "Merged" : pr.state === "CLOSED" ? "Closed" : pr.draft ? "Draft" : "Open"

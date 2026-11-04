@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process"
+import { run, RunError } from "./run"
 import type {
   Check,
   CheckState,
@@ -20,9 +20,7 @@ import type {
 
 export class GhError extends Error {}
 
-const EXTRA_PATH = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"]
-
-export interface GhOptions {
+interface GhOptions {
   bin: string
   cwd: string
   input?: string
@@ -30,36 +28,27 @@ export interface GhOptions {
 }
 
 export function gh(args: string[], options: GhOptions): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const path = [process.env.PATH, ...EXTRA_PATH].filter(Boolean).join(":")
-    const child = spawn(options.bin, args, {
-      cwd: options.cwd,
-      env: { ...process.env, PATH: path, GH_PROMPT_DISABLED: "1", GH_NO_UPDATE_NOTIFIER: "1", NO_COLOR: "1" },
-      signal: options.signal,
-    })
-    let out = ""
-    let err = ""
-    child.stdout.on("data", (chunk) => (out += chunk))
-    child.stderr.on("data", (chunk) => (err += chunk))
-    child.on("error", (error) =>
-      reject(
-        new GhError(
-          (error as NodeJS.ErrnoException).code === "ENOENT"
-            ? "GitHub CLI (gh) was not found. Install it and run `gh auth login`."
-            : error.message,
-        ),
-      ),
+  return run(options.bin, args, {
+    cwd: options.cwd,
+    env: { GH_PROMPT_DISABLED: "1", GH_NO_UPDATE_NOTIFIER: "1" },
+    input: options.input,
+    signal: options.signal,
+  }).catch((error) => {
+    throw new GhError(
+      error instanceof RunError && error.notFound
+        ? "GitHub CLI (gh) was not found. Install it and run `gh auth login`."
+        : error.message,
     )
-    child.on("close", (code) => {
-      if (code === 0) return resolve(out)
-      reject(new GhError(err.trim() || out.trim() || `gh exited with code ${code}`))
-    })
-    if (options.input !== undefined) child.stdin.end(options.input)
-    else child.stdin.end()
   })
 }
 
-export const ghJson = async <T>(args: string[], options: GhOptions): Promise<T> => JSON.parse(await gh(args, options)) as T
+const ghJson = async <T>(args: string[], options: GhOptions): Promise<T> => JSON.parse(await gh(args, options)) as T
+
+/** `gh api` targets the default host, not the cwd's remote: pass the repository's host for GitHub Enterprise. */
+const hostArgs = (url: string) => {
+  const host = new URL(url).hostname
+  return host === "github.com" ? [] : ["--hostname", host]
+}
 
 // --- normalization -------------------------------------------------------------------------------------------------
 
@@ -173,7 +162,8 @@ export class GitHub {
   private repos = new Map<string, Promise<RepoInfo>>()
   /** GraphQL node ids by `${cwd}#${number}`, for the viewed-file mutations. */
   private nodeIds = new Map<string, string>()
-  private viewer: Promise<string> | undefined
+  /** Signed-in user by host. */
+  private viewers = new Map<string, Promise<string>>()
 
   constructor(
     private bin: string,
@@ -188,33 +178,28 @@ export class GitHub {
     return ghJson<T>(args, { bin: this.bin, cwd, input, signal })
   }
 
-  private login(cwd: string) {
-    this.viewer ??= this.run(cwd, ["api", "user", "--jq", ".login"]).then(
-      (out) => out.trim(),
-      (error) => {
-        this.viewer = undefined
-        throw error
-      },
-    )
-    return this.viewer
+  private login(cwd: string, url: string) {
+    const host = new URL(url).hostname
+    const cached = this.viewers.get(host)
+    if (cached) return cached
+    const next = this.run(cwd, ["api", ...hostArgs(url), "user", "--jq", ".login"]).then((out) => out.trim())
+    next.catch(() => this.viewers.delete(host))
+    this.viewers.set(host, next)
+    return next
   }
 
   repo(cwd: string): Promise<RepoInfo> {
     const cached = this.repos.get(cwd)
     if (cached) return cached
-    const next = Promise.all([
-      this.json<{ nameWithOwner: string; url: string; defaultBranchRef: { name: string } | null }>(cwd, [
-        "repo",
-        "view",
-        "--json",
-        "nameWithOwner,url,defaultBranchRef",
-      ]),
-      this.login(cwd),
-    ]).then(([repo, viewer]) => ({
+    const next = this.json<{ nameWithOwner: string; url: string }>(cwd, [
+      "repo",
+      "view",
+      "--json",
+      "nameWithOwner,url",
+    ]).then(async (repo) => ({
       nameWithOwner: repo.nameWithOwner,
       url: repo.url,
-      defaultBranch: repo.defaultBranchRef?.name ?? "main",
-      viewer,
+      viewer: await this.login(cwd, repo.url),
     }))
     next.catch(() => this.repos.delete(cwd))
     this.repos.set(cwd, next)
@@ -270,7 +255,6 @@ export class GitHub {
         mergeable: string
         mergeStateStatus: string
         changedFiles: number
-        isCrossRepository: boolean
         latestReviews: { author: { login: string } | null; state: string }[]
         reviews: { id: string; author: { login: string } | null; body: string; submittedAt: string; state: string }[]
         comments: { id: string; author: { login: string } | null; body: string; createdAt: string; url: string }[]
@@ -292,7 +276,6 @@ export class GitHub {
           "mergeable",
           "mergeStateStatus",
           "changedFiles",
-          "isCrossRepository",
           "latestReviews",
           "reviews",
           "comments",
@@ -352,7 +335,6 @@ export class GitHub {
     this.nodeIds.set(`${cwd}#${number}`, raw.id)
     return {
       ...toSummary(raw, repo.viewer),
-      id: raw.id,
       viewer: repo.viewer,
       body: raw.body,
       createdAt: raw.createdAt,
@@ -360,7 +342,6 @@ export class GitHub {
       mergeable: raw.mergeable,
       mergeStateStatus: raw.mergeStateStatus,
       changedFiles: raw.changedFiles,
-      crossRepository: raw.isCrossRepository,
       checkList,
       reviewers: [...reviewers.values()],
       timeline,
@@ -375,7 +356,7 @@ export class GitHub {
     const [pages, commentPages, viewed] = await Promise.all([
       this.json<
         { filename: string; previous_filename?: string; status: string; additions: number; deletions: number; patch?: string }[][]
-      >(cwd, ["api", `${base}/files?per_page=100`, "--paginate", "--slurp"], undefined, signal),
+      >(cwd, ["api", ...hostArgs(repo.url), `${base}/files?per_page=100`, "--paginate", "--slurp"], undefined, signal),
       this.json<
         {
           id: number
@@ -390,8 +371,13 @@ export class GitHub {
           in_reply_to_id?: number
           html_url: string
         }[][]
-      >(cwd, ["api", `${base}/comments?per_page=100`, "--paginate", "--slurp"], undefined, signal),
-      this.viewedStates(cwd, owner, name, number, signal).catch(() => new Map<string, ViewedState>()),
+      >(
+        cwd,
+        ["api", ...hostArgs(repo.url), `${base}/comments?per_page=100`, "--paginate", "--slurp"],
+        undefined,
+        signal,
+      ),
+      this.viewedStates(cwd, repo, owner, name, number, signal).catch(() => new Map<string, ViewedState>()),
     ])
 
     return {
@@ -422,7 +408,14 @@ export class GitHub {
     }
   }
 
-  private async viewedStates(cwd: string, owner: string, name: string, number: number, signal?: AbortSignal) {
+  private async viewedStates(
+    cwd: string,
+    repo: RepoInfo,
+    owner: string,
+    name: string,
+    number: number,
+    signal?: AbortSignal,
+  ) {
     const query = `query($owner: String!, $name: String!, $number: Int!, $endCursor: String) {
       repository(owner: $owner, name: $name) {
         pullRequest(number: $number) {
@@ -439,12 +432,14 @@ export class GitHub {
       cwd,
       [
         "api",
+        ...hostArgs(repo.url),
         "graphql",
         "--paginate",
         "--slurp",
-        "-F",
+        // -f sends strings verbatim; -F would read `@file` and coerce true/false/null/numbers.
+        "-f",
         `owner=${owner}`,
-        "-F",
+        "-f",
         `name=${name}`,
         "-F",
         `number=${number}`,
@@ -461,6 +456,7 @@ export class GitHub {
   }
 
   async setViewed(cwd: string, number: number, path: string, viewed: boolean) {
+    const repo = await this.repo(cwd)
     const key = `${cwd}#${number}`
     const id =
       this.nodeIds.get(key) ?? (await this.json<{ id: string }>(cwd, ["pr", "view", String(number), "--json", "id"])).id
@@ -468,12 +464,13 @@ export class GitHub {
     const mutation = viewed ? "markFileAsViewed" : "unmarkFileAsViewed"
     await this.run(cwd, [
       "api",
+      ...hostArgs(repo.url),
       "graphql",
       "-f",
       `query=mutation($id: ID!, $path: String!) { ${mutation}(input: { pullRequestId: $id, path: $path }) { clientMutationId } }`,
-      "-F",
+      "-f",
       `id=${id}`,
-      "-F",
+      "-f",
       `path=${path}`,
     ])
   }
@@ -486,7 +483,15 @@ export class GitHub {
     const repo = await this.repo(cwd)
     await this.run(
       cwd,
-      ["api", "-X", "POST", `repos/${repo.nameWithOwner}/pulls/${number}/comments/${commentID}/replies`, "--input", "-"],
+      [
+        "api",
+        ...hostArgs(repo.url),
+        "-X",
+        "POST",
+        `repos/${repo.nameWithOwner}/pulls/${number}/comments/${commentID}/replies`,
+        "--input",
+        "-",
+      ],
       JSON.stringify({ body }),
     )
   }
@@ -516,7 +521,15 @@ export class GitHub {
     }
     await this.run(
       cwd,
-      ["api", "-X", "POST", `repos/${repo.nameWithOwner}/pulls/${input.number}/reviews`, "--input", "-"],
+      [
+        "api",
+        ...hostArgs(repo.url),
+        "-X",
+        "POST",
+        `repos/${repo.nameWithOwner}/pulls/${input.number}/reviews`,
+        "--input",
+        "-",
+      ],
       JSON.stringify(payload),
     )
   }

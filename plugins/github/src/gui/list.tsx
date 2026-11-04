@@ -22,14 +22,14 @@ export function ListView(props: { app: App; session: MountedSession }) {
 
   const repo = createLatest(
     () => `${dir()}\n${version()}`,
-    (key) => props.app.api.repo(key.split("\n")[0]),
+    (key, signal) => props.app.api.repo(key.split("\n")[0], signal),
   )
   // Only list once the repository resolves, so a broken repo shows one error instead of two.
   const prs = createLatest(
     () => (repo.latest && !repo.error ? `${dir()}\n${state()}\n${version()}` : undefined),
-    (key) => {
+    (key, signal) => {
       const [d, s] = key.split("\n")
-      return props.app.api.list(d, s as ListState)
+      return props.app.api.list(d, s as ListState, signal)
     },
   )
 
@@ -66,7 +66,8 @@ export function ListView(props: { app: App; session: MountedSession }) {
   })
 
   const failure = () => (prs.latest ? undefined : (repo.error ?? prs.error))
-  const stale = () => (prs.latest ? prs.error : undefined)
+  // A failed repo refresh unkeys the list, which clears prs.error; show the repo's error over the kept list.
+  const stale = () => (prs.latest ? (repo.error ?? prs.error) : undefined)
   const loading = () => repo.loading || prs.loading
   const retry = () => setVersion((v) => v + 1)
   const currentNumber = () => props.app.currentPr(dir())?.number
@@ -212,7 +213,7 @@ function Row(props: { app: App; pr: PrSummary; current: boolean; onOpen: (event:
 
 export function Segmented<T extends string>(props: {
   value: T
-  options: { value: T; label: string; count?: number }[]
+  options: { value: T; label: string }[]
   onChange: (value: T) => void
   label: string
 }) {
@@ -229,9 +230,6 @@ export function Segmented<T extends string>(props: {
             onClick={() => props.onChange(option.value)}
           >
             {option.label}
-            <Show when={option.count !== undefined}>
-              <span class="prr-seg-count">{option.count}</span>
-            </Show>
           </button>
         )}
       </For>

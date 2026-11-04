@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { execFileSync } from "node:child_process"
@@ -32,6 +32,7 @@ run(["branch", "old-branch", "feature/x"]) // points at unmerged c6 for now
 run(["checkout", "dev"])
 run(["push", "-u", "origin", "dev"])
 commit("c7 dev unpushed") // local dev now ahead of origin/dev by 1
+run(["remote", "set-head", "origin", "main"]) // refs/remotes/origin/HEAD, short name "origin"
 
 let failures = 0
 const check = (name: string, cond: boolean, extra?: unknown) => {
@@ -52,7 +53,7 @@ const branches = await git.branches(work)
 const names = branches.map((b) => b.name)
 check("local branches", ["dev", "main", "feature/x", "old-branch"].every((n) => names.includes(n)), names)
 check("remote branches", names.includes("origin/main") && names.includes("origin/dev"), names)
-check("no origin/HEAD", !names.includes("origin/HEAD"), names)
+check("no origin/HEAD", !names.includes("origin/HEAD") && !names.includes("origin"), names)
 const dev = branches.find((b) => b.name === "dev")!
 check("dev.current", dev.current === true, dev)
 check("dev.upstream=origin/dev", dev.upstream === "origin/dev", dev)
@@ -64,6 +65,11 @@ const odev = branches.find((b) => b.name === "origin/dev")!
 check("origin/dev shows local ahead 1", odev.remote && odev.ahead === 1 && odev.behind === 0, odev)
 const omain = branches.find((b) => b.name === "origin/main")!
 check("origin/main behind 1 vs main? main has c4 == origin/main so 0/0", omain.ahead === 0 && omain.behind === 0, omain)
+// Without an upstream, the counts come from rev-list instead of %(upstream:track).
+run(["branch", "--unset-upstream", "dev"])
+const odev2 = (await git.branches(work)).find((b) => b.name === "origin/dev")!
+check("origin/dev shows local ahead 1 without upstream", odev2.ahead === 1 && odev2.behind === 0, odev2)
+run(["branch", "--set-upstream-to", "origin/dev", "dev"])
 
 // graph scopes
 const gAll = await git.graph(work, "all", 100)
@@ -170,10 +176,34 @@ check("empty repo graph is empty", (await git.graph(empty, "all", 100)).commits.
 check("empty repo branches are empty", (await git.branches(empty)).length === 0)
 rmSync(empty, { recursive: true, force: true })
 
+// branch names outside [A-Za-z0-9._/-] are valid
+for (const name of ["fix+x", "user@topic", "issue#12", "a,b", "café"]) {
+  await git.create(work, name, "dev")
+  check(`create ${name}`, (await git.repo(work)).branch === name)
+  await git.checkout(work, "dev")
+  await git.del(work, name, true)
+}
+
+// checkout never falls back to a pathspec checkout
+writeFileSync(join(work, "notabranch"), "x")
+run(["add", "notabranch"])
+run(["commit", "-m", "add notabranch"])
+writeFileSync(join(work, "notabranch"), "edited")
+let switchErr = ""
+try { await git.checkout(work, "notabranch") } catch (e) { switchErr = String(e) }
+check("checkout of a path fails", !!switchErr, switchErr)
+check("checkout of a path keeps edits", readFileSync(join(work, "notabranch"), "utf8") === "edited")
+run(["checkout", "--", "notabranch"])
+
 // invalid ref rejected
 let refErr = ""
 try { await git.checkout(work, "--help") } catch (e) { refErr = String(e) }
 check("invalid ref rejected", refErr.includes("Invalid ref"), refErr)
+for (const bad of ["", "a..b", "a\nb"]) {
+  let badErr = ""
+  try { await git.checkout(work, bad) } catch (e) { badErr = String(e) }
+  check(`invalid ref ${JSON.stringify(bad)} rejected`, badErr.includes("Invalid ref"), badErr)
+}
 
 rmSync(root, { recursive: true, force: true })
 rmSync(notRepo, { recursive: true, force: true })

@@ -2,8 +2,6 @@ import type { Context } from "@opencode/plugin/gui"
 import { createSignal, Show } from "solid-js"
 import { describeError } from "./classify"
 
-export { describeError } from "./classify"
-
 /** A toast for a failed action, using the friendly title with the hint as the description. */
 export function showErrorToast(ctx: Context, action: string, error: unknown, directory?: string) {
   const info = describeError(error, directory)

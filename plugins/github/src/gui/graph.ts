@@ -8,13 +8,13 @@ const PALETTE = ["#3b82f6", "#22a06b", "#d9a400", "#e5484d", "#8957e5", "#e5679b
 
 export const laneColor = (lane: number) => PALETTE[lane % PALETTE.length]
 
-export interface LaneRow {
+interface LaneRow {
   commit: GraphCommit
   lane: number
   index: number
 }
 
-export interface LaneEdge {
+interface LaneEdge {
   fromLane: number
   fromRow: number
   toLane: number
@@ -22,13 +22,13 @@ export interface LaneEdge {
   toRow: number
 }
 
-export interface LaneVertical {
+interface LaneVertical {
   lane: number
   fromRow: number
   toRow: number
 }
 
-export interface GraphLayout {
+interface GraphLayout {
   rows: LaneRow[]
   edges: LaneEdge[]
   verticals: LaneVertical[]
@@ -53,6 +53,8 @@ export function layoutGraph(commits: GraphCommit[]): GraphLayout {
   const verticals: LaneVertical[] = []
   // rowLane: the lane each already-processed commit drew on, for parents that git log listed above their child (clock skew).
   const rowLane = new Map<string, number>()
+  // open[k]: the index in `verticals` of lane k's segment that reaches the row being processed, to extend it.
+  const open: (number | undefined)[] = []
 
   const laneOf = (hash: string) => lanes.findIndex((h) => h === hash)
   const freeLane = () => {
@@ -70,8 +72,10 @@ export function layoutGraph(commits: GraphCommit[]): GraphLayout {
     const lane = holders[0] ?? freeLane()
     for (const k of holders.slice(1)) {
       lanes[k] = null
-      const straight = verticals.findIndex((v) => v.lane === k && v.toRow === i)
-      if (straight !== -1) verticals.splice(straight, 1)
+      // The curve replaces the lane's last straight step; zero-length segments are dropped at the end.
+      const straight = open[k]
+      if (straight !== undefined) verticals[straight].toRow = i - 1
+      open[k] = undefined
       edges.push({ fromLane: k, fromRow: i - 1, toLane: lane, toRow: i })
     }
     lanes[lane] = null
@@ -101,7 +105,13 @@ export function layoutGraph(commits: GraphCommit[]): GraphLayout {
       edges.push({ fromLane: lane, fromRow: i, toLane, toRow: i + 1 })
     })
     for (let k = 0; k < lanes.length; k++) {
-      if (lanes[k] !== null && !opened.has(k)) verticals.push({ lane: k, fromRow: i, toRow: i + 1 })
+      if (lanes[k] === null || opened.has(k)) {
+        open[k] = undefined
+        continue
+      }
+      const segment = open[k]
+      if (segment !== undefined && verticals[segment].toRow === i) verticals[segment].toRow = i + 1
+      else open[k] = verticals.push({ lane: k, fromRow: i, toRow: i + 1 }) - 1
     }
   }
 
@@ -110,7 +120,7 @@ export function layoutGraph(commits: GraphCommit[]): GraphLayout {
   return {
     rows,
     edges,
-    verticals,
+    verticals: verticals.filter((v) => v.toRow > v.fromRow),
     lanes: lanes.length,
     width: lanes.length * LANE_W + PAD_X,
     height: commits.length * ROW_H,

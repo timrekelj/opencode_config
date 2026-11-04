@@ -1,5 +1,5 @@
 import { createLatest, type MountedSession, type SessionScreen } from "@opencode/plugin/gui"
-import { createMemo, createSignal, For, Index, Show } from "solid-js"
+import { createMemo, createSelector, createSignal, For, Index, Show } from "solid-js"
 import { createStore } from "solid-js/store"
 import type { DraftComment, PrDetail, PrFile, ReviewComment, ReviewEvent, Side } from "../types"
 import { ErrorState, showErrorToast, StaleBanner } from "./errors"
@@ -45,19 +45,28 @@ export function CodeTab(props: {
   const reload = () => setLocal((v) => v + 1)
   const data = createLatest(
     () => `${dir()}\n${props.pr.number}\n${props.version}\n${local()}`,
-    (k) => {
+    (k, signal) => {
       const [d, n] = k.split("\n")
-      return app.api.files(d, Number(n))
+      return app.api.files(d, Number(n), signal)
     },
   )
 
-  const [viewed, setViewed] = createStore<Record<string, boolean>>({})
-  const [collapsed, setCollapsed] = createStore<Record<string, boolean>>({})
+  // Local "viewed" overrides: `loaded` is undefined while the change is in flight, then the response it was made
+  // against. Once a newer response arrives, GitHub's state wins again (it resets files to DISMISSED on new commits).
+  const [viewed, setViewed] = createStore<Record<string, { viewed: boolean; loaded?: number } | undefined>>({})
+  // Manual collapse toggles; without one, a file is collapsed while it is viewed.
+  const [collapsed, setCollapsed] = createStore<Record<string, boolean | undefined>>({})
   const [selection, setSelection] = createSignal<Selection>()
   const [filter, setFilter] = createSignal("")
 
+  const loaded = createMemo((n: number) => (data.latest ? n + 1 : n), 0)
   const files = () => data.latest?.files ?? []
-  const isViewed = (file: PrFile) => viewed[file.path] ?? file.viewed === "VIEWED"
+  // Fresh file objects arrive with every reload; rows key by path so their diff and editors survive it.
+  const byPath = createMemo(() => new Map(files().map((f) => [f.path, f])))
+  const isViewed = (file: PrFile) => {
+    const local = viewed[file.path]
+    return local && (local.loaded === undefined || local.loaded === loaded()) ? local.viewed : file.viewed === "VIEWED"
+  }
   const isCollapsed = (file: PrFile) => collapsed[file.path] ?? isViewed(file)
   const viewedCount = () => files().filter(isViewed).length
   const allCollapsed = () => files().length > 0 && files().every(isCollapsed)
@@ -65,42 +74,56 @@ export function CodeTab(props: {
 
   const shown = createMemo(() => {
     const q = filter().trim().toLowerCase()
-    return q ? files().filter((f) => f.path.toLowerCase().includes(q)) : files()
+    const paths = files().map((f) => f.path)
+    return q ? paths.filter((p) => p.toLowerCase().includes(q)) : paths
   })
 
   const threads = createMemo(() => {
     const comments = data.latest?.comments ?? []
+    const replies = new Map<number, ReviewComment[]>()
+    for (const c of comments) {
+      if (c.replyTo === null) continue
+      const list = replies.get(c.replyTo) ?? []
+      list.push(c)
+      replies.set(c.replyTo, list)
+    }
     const byPath = new Map<string, Thread[]>()
     for (const root of comments) {
       if (root.replyTo !== null) continue
       const list = byPath.get(root.path) ?? []
-      list.push({ root, replies: comments.filter((c) => c.replyTo === root.id) })
+      list.push({ root, replies: replies.get(root.id) ?? [] })
       byPath.set(root.path, list)
     }
     return byPath
   })
 
   const toggleViewed = async (file: PrFile) => {
+    const path = file.path
     const next = !isViewed(file)
-    setViewed(file.path, next)
-    setCollapsed(file.path, next)
+    setViewed(path, { viewed: next, loaded: undefined })
+    setCollapsed(path, undefined)
     try {
-      await app.api.setViewed(dir(), props.pr.number, file.path, next)
+      await app.api.setViewed(dir(), props.pr.number, path, next)
+      setViewed(path, { viewed: next, loaded: loaded() })
     } catch (error) {
-      setViewed(file.path, !next)
-      setCollapsed(file.path, !next)
+      setViewed(path, undefined)
       showErrorToast(ctx, "Marking as viewed", error, dir())
     }
   }
 
-  const select = (path: string, line: DiffLine, extend: boolean) => {
+  const select = (path: string, line: DiffLine, extend: boolean, lines: DiffLine[]) => {
     const n = lineNumber(line)
     if (n === undefined) return
     const side = lineSide(line)
     const current = selection()
     if (extend && current && current.path === path && current.side === side) {
-      setSelection({ path, side, start: Math.min(current.start, n), end: Math.max(current.end, n) })
-      return
+      const start = Math.min(current.start, n)
+      const end = Math.max(current.end, n)
+      // GitHub rejects a multi-line comment that spans hunks; start over from the clicked line instead.
+      if (!spansHunks(lines, side, start, end)) {
+        setSelection({ path, side, start, end })
+        return
+      }
     }
     setSelection({ path, side, start: n, end: n })
   }
@@ -165,7 +188,6 @@ export function CodeTab(props: {
       directory: dir(),
       onDone: () => {
         app.updateDrafts(key(), () => [])
-        reload()
         props.onSubmitted()
       },
     })
@@ -223,26 +245,30 @@ export function CodeTab(props: {
           <div class="prr-empty prr-muted">{filter() ? "No files match the filter." : "No files changed."}</div>
         </Show>
         <For each={shown()}>
-          {(file) => (
-            <FileDiff
-              app={app}
-              session={props.session}
-              file={file}
-              viewed={isViewed(file)}
-              collapsed={isCollapsed(file)}
-              threads={threads().get(file.path) ?? []}
-              drafts={drafts().filter((d) => d.path === file.path)}
-              selection={selection()?.path === file.path ? selection() : undefined}
-              prUrl={props.pr.url}
-              onToggleViewed={() => void toggleViewed(file)}
-              onToggleCollapsed={() => setCollapsed(file.path, !isCollapsed(file))}
-              onSelect={(line, extend) => select(file.path, line, extend)}
-              onCancel={() => setSelection(undefined)}
-              onDraft={(sel, body) => addDraft(sel, body)}
-              onAsk={(sel, body) => askAgent(sel, file, body)}
-              onRemoveDraft={(id) => app.updateDrafts(key(), (list) => list.filter((d) => d.id !== id))}
-              onReply={reply}
-            />
+          {(path) => (
+            <Show when={byPath().get(path)}>
+              {(file) => (
+                <FileDiff
+                  app={app}
+                  session={props.session}
+                  file={file()}
+                  viewed={isViewed(file())}
+                  collapsed={isCollapsed(file())}
+                  threads={threads().get(path) ?? []}
+                  drafts={drafts().filter((d) => d.path === path)}
+                  selection={selection()?.path === path ? selection() : undefined}
+                  prUrl={props.pr.url}
+                  onToggleViewed={() => void toggleViewed(file())}
+                  onToggleCollapsed={() => setCollapsed(path, !isCollapsed(file()))}
+                  onSelect={(line, extend, lines) => select(path, line, extend, lines)}
+                  onCancel={() => setSelection(undefined)}
+                  onDraft={(sel, body) => addDraft(sel, body)}
+                  onAsk={(sel, body) => askAgent(sel, file(), body)}
+                  onRemoveDraft={(id) => app.updateDrafts(key(), (list) => list.filter((d) => d.id !== id))}
+                  onReply={reply}
+                />
+              )}
+            </Show>
           )}
         </For>
       </div>
@@ -262,7 +288,7 @@ function FileDiff(props: {
   prUrl: string
   onToggleViewed: () => void
   onToggleCollapsed: () => void
-  onSelect: (line: DiffLine, extend: boolean) => void
+  onSelect: (line: DiffLine, extend: boolean, lines: DiffLine[]) => void
   onCancel: () => void
   onDraft: (sel: Selection, body: string) => void
   onAsk: (sel: Selection, body: string) => void
@@ -271,36 +297,46 @@ function FileDiff(props: {
 }) {
   const ctx = props.app.ctx
   const ui = ctx.ui
-  const lines = createMemo(() => (props.file.patch ? parsePatch(props.file.patch) : []))
+  // Keyed on the patch text, so a reload with an unchanged patch doesn't re-parse or re-render the diff.
+  const patch = createMemo(() => props.file.patch)
+  const lines = createMemo(() => {
+    const text = patch()
+    return text ? parsePatch(text) : []
+  })
   const status = () => STATUS[props.file.status] ?? STATUS.modified
   const path = () => splitPath(props.file.path)
   const commentCount = () => props.threads.reduce((n, t) => n + 1 + t.replies.length, 0)
-  const current = () => props.threads.filter((t) => t.root.line !== null)
-  const outdated = () => props.threads.filter((t) => t.root.line === null)
+  // Threads render by root id, so a reload keeps their cards (and any reply being written) in place.
+  const threadById = createMemo(() => new Map(props.threads.map((t) => [t.root.id, t])))
+  const outdated = createMemo(() => props.threads.filter((t) => t.root.line === null).map((t) => t.root.id))
+  const threadIds = createMemo(() => {
+    const map = new Map<string, number[]>()
+    for (const t of props.threads) if (t.root.line !== null) push(map, `${t.root.side}:${t.root.line}`, t.root.id)
+    return map
+  })
+  const draftMap = createMemo(() => {
+    const map = new Map<string, DraftComment[]>()
+    for (const d of props.drafts) push(map, `${d.side}:${d.line}`, d)
+    return map
+  })
+  // Only this file's rows react to selection changes, and only the rows whose state flips.
+  const selection = createMemo(() => props.selection)
 
   const at = (line: DiffLine) => {
     const n = lineNumber(line)
     if (n === undefined || line.kind === "hunk" || line.kind === "note") return undefined
     return { n, side: lineSide(line) }
   }
-  const threadsAt = (line: DiffLine) => {
+  const threadsAt = (line: DiffLine) => positions(line).flatMap((k) => threadIds().get(k) ?? [])
+  const draftsAt = (line: DiffLine) => positions(line).flatMap((k) => draftMap().get(k) ?? [])
+  const selected = createSelector(selection, (line: DiffLine, sel) => {
     const pos = at(line)
-    return pos ? current().filter((t) => t.root.side === pos.side && t.root.line === pos.n) : []
-  }
-  const draftsAt = (line: DiffLine) => {
-    const pos = at(line)
-    return pos ? props.drafts.filter((d) => d.side === pos.side && d.line === pos.n) : []
-  }
-  const selected = (line: DiffLine) => {
-    const pos = at(line)
-    const sel = props.selection
     return !!pos && !!sel && sel.side === pos.side && pos.n >= sel.start && pos.n <= sel.end
-  }
-  const editorAt = (line: DiffLine) => {
+  })
+  const editorAt = createSelector(selection, (line: DiffLine, sel) => {
     const pos = at(line)
-    const sel = props.selection
     return !!pos && !!sel && sel.side === pos.side && sel.end === pos.n
-  }
+  })
 
   return (
     <section class="prr-file" classList={{ "prr-file-viewed": props.viewed }}>
@@ -361,13 +397,17 @@ function FileDiff(props: {
         <Show when={outdated().length > 0}>
           <div class="prr-outdated">
             <For each={outdated()}>
-              {(thread) => (
-                <ThreadCard
-                  app={props.app}
-                  thread={thread}
-                  outdated
-                  onReply={(body) => props.onReply(thread, body)}
-                />
+              {(id) => (
+                <Show when={threadById().get(id)}>
+                  {(thread) => (
+                    <ThreadCard
+                      app={props.app}
+                      thread={thread()}
+                      outdated
+                      onReply={(body) => props.onReply(thread(), body)}
+                    />
+                  )}
+                </Show>
               )}
             </For>
           </div>
@@ -410,7 +450,7 @@ function FileDiff(props: {
                             class="prr-diff-plus"
                             aria-label="Comment on this line"
                             title="Comment on this line (shift-click to extend the range)"
-                            onClick={(e) => props.onSelect(line(), e.shiftKey)}
+                            onClick={(e) => props.onSelect(line(), e.shiftKey, lines())}
                           >
                             <ui.Icon name="plus-small" size="small" />
                           </button>
@@ -425,8 +465,12 @@ function FileDiff(props: {
                     </div>
                   </Show>
                   <For each={threadsAt(line())}>
-                    {(thread) => (
-                      <ThreadCard app={props.app} thread={thread} onReply={(body) => props.onReply(thread, body)} />
+                    {(id) => (
+                      <Show when={threadById().get(id)}>
+                        {(thread) => (
+                          <ThreadCard app={props.app} thread={thread()} onReply={(body) => props.onReply(thread(), body)} />
+                        )}
+                      </Show>
                     )}
                   </For>
                   <For each={draftsAt(line())}>
@@ -454,7 +498,7 @@ function FileDiff(props: {
                       </div>
                     )}
                   </For>
-                  <Show when={editorAt(line()) && props.selection}>
+                  <Show when={editorAt(line()) && selection()}>
                     {(sel) => (
                       <LineEditor
                         app={props.app}
@@ -473,6 +517,34 @@ function FileDiff(props: {
       </Show>
     </section>
   )
+}
+
+function push<T>(map: Map<string, T[]>, key: string, value: T) {
+  const list = map.get(key)
+  if (list) list.push(value)
+  else map.set(key, [value])
+}
+
+/** The `side:line` positions a comment on this diff line can have; a context line exists on both sides. */
+function positions(line: DiffLine): string[] {
+  if (line.kind === "add") return [`RIGHT:${line.new}`]
+  if (line.kind === "del") return [`LEFT:${line.old}`]
+  if (line.kind === "ctx") return [`RIGHT:${line.new}`, `LEFT:${line.old}`]
+  return []
+}
+
+/** Whether lines `start`–`end` on `side` cross a hunk header. */
+function spansHunks(lines: DiffLine[], side: Side, start: number, end: number) {
+  let first = -1
+  let last = -1
+  lines.forEach((l, i) => {
+    if (l.kind === "hunk" || l.kind === "note" || lineSide(l) !== side) return
+    const n = lineNumber(l)
+    if (n === undefined || n < start || n > end) return
+    if (first === -1) first = i
+    last = i
+  })
+  return first !== -1 && lines.slice(first, last).some((l) => l.kind === "hunk")
 }
 
 function LineEditor(props: {
@@ -627,6 +699,7 @@ function openReviewDialog(
       (event() === "REQUEST_CHANGES" && !body().trim())
 
     const send = async () => {
+      if (sending()) return
       setSending(true)
       try {
         await app.api.submitReview(input.directory, input.pr.number, {
@@ -665,7 +738,7 @@ function openReviewDialog(
           </>
         }
       >
-        <div class="prr-review-dialog">
+        <div class="prr-dialog">
           <textarea
             class="prr-textarea prr-textarea-tall"
             placeholder={event() === "REQUEST_CHANGES" ? "Describe the changes you need (required)" : "Summary (optional)"}

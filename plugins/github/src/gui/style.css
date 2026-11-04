@@ -1,5 +1,5 @@
 .prr-root,
-.prr-review-dialog {
+.prr-dialog {
   --prr-text: var(--v2-text-text-base, currentColor);
   --prr-muted: var(--v2-text-text-muted, color-mix(in srgb, currentColor 62%, transparent));
   --prr-faint: var(--v2-text-text-faint, color-mix(in srgb, currentColor 42%, transparent));
@@ -146,7 +146,6 @@
 .prr-tone-pending {
   color: var(--prr-warning);
 }
-.prr-tone-none,
 .prr-tone-neutral,
 .prr-tone-skipped {
   color: var(--prr-faint);
@@ -263,10 +262,6 @@
   background: var(--prr-bg);
   color: var(--prr-text) !important;
   box-shadow: 0 0 0 1px var(--prr-border);
-}
-.prr-seg-count {
-  color: var(--prr-faint);
-  font-variant-numeric: tabular-nums;
 }
 
 .prr-scroll {
@@ -1180,9 +1175,9 @@
   margin-top: 10px;
 }
 
-/* review dialog -----------------------------------------------------------------------------------------------------*/
+/* dialogs -----------------------------------------------------------------------------------------------------------*/
 
-.prr-review-dialog {
+.prr-dialog {
   display: flex;
   flex-direction: column;
   gap: 12px;

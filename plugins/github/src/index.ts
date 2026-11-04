@@ -1,5 +1,5 @@
 import { Plugin } from "@opencode/plugin"
-import { GhError, GitHub } from "./gh"
+import { GitHub } from "./gh"
 import * as git from "./git"
 import { GitError } from "./git"
 import { Git, PrReview } from "./rpc"
@@ -21,7 +21,7 @@ export default Plugin.define({
           // RPC outputs must be plain JSON: drop `undefined` fields (e.g. optional check URLs).
           return JSON.parse(JSON.stringify((await fn(input as I & Base, context.signal)) ?? null))
         } catch (error) {
-          const message = error instanceof GhError || error instanceof GitError || error instanceof Error ? error.message : String(error)
+          const message = error instanceof Error ? error.message : String(error)
           return context.error(error instanceof GitError ? "git_failed" : "gh_failed", message, { message })
         }
       }

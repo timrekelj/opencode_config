@@ -18,7 +18,7 @@ import { BRANCHES_TAB, LIST_TAB, prKey, prTabId, prTabNumber, type App } from ".
 import { BranchesView, checkoutFlow, newBranchFlow } from "./gui/branches"
 import { DetailView } from "./gui/detail"
 import { ListView } from "./gui/list"
-import { checkIcon, checkLabel } from "./gui/util"
+import { checkIcon, checkLabel, checkTone } from "./gui/util"
 import css from "./gui/style.css?inline"
 
 const CURRENT_REFRESH_MS = 2 * 60 * 1000
@@ -388,7 +388,7 @@ export default Plugin.define({
           icon: "github",
           label: `#${pr.number}`,
           title: `${ctx.t("pill.title")}: ${pr.title} — ${checkLabel(pr.checks)}`,
-          tone: pr.checks === "failure" ? "danger" : pr.checks === "pending" ? "warning" : pr.checks === "success" ? "success" : undefined,
+          tone: checkTone(pr.checks),
           rows: [
             {
               id: "open",
@@ -401,7 +401,7 @@ export default Plugin.define({
               id: "checks",
               label: checkLabel(pr.checks),
               icon: checkIcon(pr.checks),
-              tone: pr.checks === "failure" ? "danger" : pr.checks === "success" ? "success" : undefined,
+              tone: checkTone(pr.checks),
             },
             {
               id: "github",
