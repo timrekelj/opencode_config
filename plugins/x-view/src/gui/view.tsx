@@ -1,5 +1,5 @@
 import { usePanel, type Plugin } from "@opencode/plugin/gui"
-import { createEffect, createSignal, Match, on, Switch } from "solid-js"
+import { createEffect, createSignal, Match, on, Show, Switch } from "solid-js"
 import { XView } from "../contract"
 
 type Ctx = Parameters<Plugin.Setup>[0]
@@ -47,6 +47,27 @@ export function XTab(props: { ctx: Ctx }) {
     }),
   )
 
+  // Scrolling only while an agent works: any running session on any listed server unlocks it. Main ignores the lock
+  // when the `idleLock` option is false.
+  const running = () =>
+    ctx.servers.list().flatMap((id) => {
+      const server = ctx.servers.get(id)
+      if (!server) return []
+      return server.data.session.active().map((session) => {
+        let title: string | undefined
+        try {
+          title = server.data.session.get(session)?.title
+        } catch {}
+        return `${title || session} (${server.name})`
+      })
+    })
+  const working = () => running().length > 0
+  createEffect(
+    on([working, embed], ([busy, id]) => {
+      if (id) view.lock({ locked: !busy }).catch(() => {})
+    }),
+  )
+
   return (
     <div class="xv-root" ref={root}>
       <div class="xv-toolbar">
@@ -75,6 +96,16 @@ export function XTab(props: { ctx: Ctx }) {
         <button class="xv-url xv-ellipsis" title="Go to start page" disabled={!embed()} onClick={() => void view.home()}>
           {page()?.url.replace(/^https:\/\/(www\.)?/, "") || "x.com"}
         </button>
+        <Show when={page()?.locked}>
+          <span class="xv-muted xv-lock" title="Scrolling unlocks while an agent is working">
+            <ui.Icon name="lock" size="small" />
+          </span>
+        </Show>
+        <Show when={embed() && working()}>
+          <span class="xv-muted xv-lock" title={`Working:\n${running().join("\n")}`}>
+            {running().length} working
+          </span>
+        </Show>
         <ui.IconButton
           icon="square-arrow-top-right"
           label="Open in browser"

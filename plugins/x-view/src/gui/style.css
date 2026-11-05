@@ -51,6 +51,11 @@
   color: var(--xv-text);
 }
 
+.xv-lock {
+  display: inline-flex;
+  padding: 0 4px;
+}
+
 .xv-muted {
   color: var(--xv-muted);
 }

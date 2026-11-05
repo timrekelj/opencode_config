@@ -7,6 +7,8 @@ export const Page = Schema.Struct({
   loading: Schema.Boolean,
   canGoBack: Schema.Boolean,
   canGoForward: Schema.Boolean,
+  /** Scrolling is blocked because no agent is working. */
+  locked: Schema.Boolean,
 })
 
 /** The X page main places in each window, in its own persistent partition so the login survives restarts. */
@@ -22,6 +24,8 @@ export const XView = Ipc.define({
     /** Loads the start page again. */
     home: {},
     devtools: {},
+    /** Blocks or allows scrolling the calling window's page. The GUI locks it while no agent is working. */
+    lock: { input: Schema.Struct({ locked: Schema.Boolean }) },
     /** Disposes the calling window's view. The login stays in the partition. */
     close: {},
   },

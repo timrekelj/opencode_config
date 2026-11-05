@@ -39,6 +39,12 @@ default browser, and DevTools.
 `url` is the start page. It defaults to `https://x.com/home` and must be an `https` URL on x.com or twitter.com;
 anything else falls back to the default.
 
+`idleLock` (default `true`) locks the page while no agent is working: a gray overlay with a lock covers it and takes
+the clicks, and it blocks wheel and trackpad scrolling, and the keys that
+scroll or move through the timeline (space, arrows, Page Up/Down, Home/End, `j`, `k`, `.`), outside text fields. Any
+running session on any server the app lists unlocks it. A lock icon in the toolbar shows when it's on. Set it to
+`false` to scroll freely.
+
 ## Layout
 
 - `src/index.ts`: server part, a no-op. The plugin only needs the package entry and its options.
