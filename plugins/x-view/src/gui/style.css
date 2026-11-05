@@ -1,0 +1,93 @@
+.xv-root {
+  --xv-text: var(--v2-text-text-base, currentColor);
+  --xv-muted: var(--v2-text-text-muted, color-mix(in srgb, currentColor 65%, transparent));
+  --xv-border: var(--v2-border-border-muted, color-mix(in srgb, currentColor 12%, transparent));
+  --xv-layer: var(--v2-background-bg-layer-01, color-mix(in srgb, currentColor 4%, transparent));
+
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  color: var(--xv-text);
+  font-size: var(--font-size-base, 13px);
+}
+
+.xv-tab-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.xv-logo {
+  width: 12px;
+  height: 12px;
+  flex: none;
+}
+
+.xv-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--xv-border);
+  min-width: 0;
+}
+
+.xv-url {
+  flex: 1;
+  min-width: 0;
+  margin: 0 4px;
+  padding: 3px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--xv-layer);
+  color: var(--xv-muted);
+  font: inherit;
+  font-size: var(--font-size-small, 12px);
+  text-align: left;
+  cursor: pointer;
+}
+.xv-url:hover:not(:disabled) {
+  color: var(--xv-text);
+}
+
+.xv-muted {
+  color: var(--xv-muted);
+}
+
+.xv-ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.xv-embed {
+  flex: 1;
+  min-height: 0;
+}
+
+.xv-message {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px;
+  text-align: center;
+}
+
+.xv-error {
+  max-width: 100%;
+  max-height: 40%;
+  overflow: auto;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--xv-layer);
+  color: var(--xv-muted);
+  font-family: var(--font-family-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: var(--font-size-x-small, 11px);
+  text-align: left;
+  white-space: pre-wrap;
+}
