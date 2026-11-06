@@ -22,6 +22,7 @@ import { checkIcon, checkLabel, checkTone } from "./gui/util"
 import css from "./gui/style.css?inline"
 
 const CURRENT_REFRESH_MS = 2 * 60 * 1000
+const BRANCH_REFRESH_MS = 3000
 
 export default Plugin.define({
   i18n: {
@@ -319,11 +320,23 @@ export default Plugin.define({
         () => setCurrent(session.directory, null),
       )
 
-    const refreshBranch = (session: SessionRef & { directory: string }) =>
-      git.repo(session.directory).then(
-        (status) => setBranch(session.directory, status),
-        () => setBranch(session.directory, null),
+    // Latest request per directory wins, so a slow response can't overwrite a newer one.
+    const branchSeq: Record<string, number> = {}
+    const refreshBranch = (session: SessionRef & { directory: string }) => {
+      const dir = session.directory
+      const seq = (branchSeq[dir] = (branchSeq[dir] ?? 0) + 1)
+      return git.repo(dir).then(
+        (status) => {
+          if (branchSeq[dir] !== seq) return
+          const previous = branch[dir]
+          setBranch(dir, status)
+          // The branch changed outside the plugin (terminal, agent): its PR changed too.
+          if (previous && (previous.branch !== status.branch || previous.detached !== status.detached))
+            void refreshCurrent(session)
+        },
+        () => branchSeq[dir] === seq && setBranch(dir, null),
       )
+    }
 
     createKeyed(
       () => `${ctx.sessions.current()?.directory}\n${branchTick()}`,
@@ -334,12 +347,25 @@ export default Plugin.define({
         void refreshBranch(session)
         const timer = setInterval(() => {
           const s = ctx.sessions.current()
-          if (s) {
-            void refreshCurrent(s)
-            void refreshBranch(s)
-          }
+          if (s) void refreshCurrent(s)
         }, CURRENT_REFRESH_MS)
-        onCleanup(() => clearInterval(timer))
+        // Reading the branch is a few local git calls, so poll it often while the window is visible.
+        const branchTimer = setInterval(() => {
+          const s = ctx.sessions.current()
+          if (s && document.visibilityState === "visible") void refreshBranch(s)
+        }, BRANCH_REFRESH_MS)
+        const onFocus = () => {
+          const s = ctx.sessions.current()
+          if (s && document.visibilityState === "visible") void refreshBranch(s)
+        }
+        window.addEventListener("focus", onFocus)
+        document.addEventListener("visibilitychange", onFocus)
+        onCleanup(() => {
+          clearInterval(timer)
+          clearInterval(branchTimer)
+          window.removeEventListener("focus", onFocus)
+          document.removeEventListener("visibilitychange", onFocus)
+        })
       },
     )
 
