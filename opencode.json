@@ -38,10 +38,24 @@
           "-y",
           "@heroui/react-mcp@latest"
         ]
+      },
+      "browse": {
+        "type": "local",
+        "command": [
+          "/Users/timrekelj/.local/bin/browse",
+          "mcp"
+        ],
+        "environment": {
+          "OPENCODE_BROWSER_RUNTIME": "auto-update"
+        }
       }
     }
   },
-  "default_agent": "build",
+  "default_agent": "lead",
+  "agents": {
+    "explore": { "model": "mistral/mistral-large-4" },
+    "general": { "model": "mistral/mistral-large-4" }
+  },
   "permissions": [
     { "action": "skill", "resource": "*", "effect": "ask" },
     { "action": "skill", "resource": "work", "effect": "allow" },
