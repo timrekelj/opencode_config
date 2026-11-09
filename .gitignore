@@ -8,3 +8,4 @@ service.json
 !/integrations/ponytail/package-lock.json
 !/plugins/*/package.json
 !/plugins/*/bun.lock
+/secrets/

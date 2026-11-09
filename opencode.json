@@ -48,6 +48,13 @@
         "environment": {
           "OPENCODE_BROWSER_RUNTIME": "auto-update"
         }
+      },
+      "flowcrit": {
+        "type": "remote",
+        "url": "https://flowcrit.timrekelj.si/mcp",
+        "headers": {
+          "Authorization": "Bearer {file:~/.config/opencode/secrets/flowcrit-token}"
+        }
       }
     }
   },
