@@ -58,17 +58,8 @@
       }
     }
   },
-  "default_agent": "lead",
-  "agents": {
-    "explore": { "model": "mistral/mistral-large-4" },
-    "general": { "model": "mistral/mistral-large-4" }
-  },
   "permissions": [
     { "action": "skill", "resource": "*", "effect": "ask" },
-    { "action": "skill", "resource": "work", "effect": "allow" },
-    { "action": "skill", "resource": "verify", "effect": "allow" },
-    { "action": "skill", "resource": "ship", "effect": "allow" },
-    { "action": "skill", "resource": "branches", "effect": "allow" },
     { "action": "skill", "resource": "browser", "effect": "allow" },
     { "action": "skill", "resource": "agent-desktop*", "effect": "allow" },
     { "action": "shell", "resource": "git push *", "effect": "ask" },
