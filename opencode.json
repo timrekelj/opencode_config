@@ -58,6 +58,7 @@
       }
     }
   },
+  "default_agent": "lead",
   "permissions": [
     { "action": "skill", "resource": "*", "effect": "ask" },
     { "action": "skill", "resource": "browser", "effect": "allow" },
