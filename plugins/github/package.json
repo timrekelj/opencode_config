@@ -12,7 +12,7 @@
     "build": "vite build",
     "dev": "vite build --watch",
     "typecheck": "tsc --noEmit",
-    "test": "bun run scripts/test-git.ts"
+    "test": "bun run scripts/test-git.ts && bun run scripts/test-auto-review.ts"
   },
   "dependencies": {
     "@opencode/plugin": "2.2.0"

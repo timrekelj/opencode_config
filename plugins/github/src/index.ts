@@ -1,4 +1,5 @@
 import { Plugin } from "@opencode/plugin"
+import { autoReview } from "./auto-review"
 import { GitHub } from "./gh"
 import * as git from "./git"
 import { GitError } from "./git"
@@ -75,5 +76,7 @@ export default Plugin.define({
       pull: handle<Record<string, never>, string>((i, signal) => git.pull(i.directory, signal)),
       push: handle<Record<string, never>, string>((i, signal) => git.push(i.directory, signal)),
     } as any)
+
+    if (ctx.options.autoReview !== false) await autoReview(ctx)
   },
 })
