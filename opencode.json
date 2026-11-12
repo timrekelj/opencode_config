@@ -55,6 +55,16 @@
         "headers": {
           "Authorization": "Bearer {file:~/.config/opencode/secrets/flowcrit-token}"
         }
+      },
+      "mixpanel": {
+        "type": "remote",
+        "url": "https://mcp.mixpanel.com/mcp"
+      },
+      "1password": {
+        "type": "local",
+        "command": [
+          "/Applications/1Password.app/Contents/MacOS/1password-mcp"
+        ]
       }
     }
   },
