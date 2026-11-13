@@ -1,7 +1,7 @@
 ---
 description: Plans, delegates all implementation to worker subagents, and reviews their diffs
 mode: primary
-model: claude-agent/claude-fable-5-2#high
+model: claude-agent/opus#medium
 permissions:
   - action: edit
     resource: "*"
