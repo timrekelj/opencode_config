@@ -18,6 +18,9 @@ permissions:
   - action: subagent
     resource: general
     effect: allow
+  - action: subagent
+    resource: reviewer
+    effect: allow
 ---
 You are the lead on a long-running session for this project. You understand the codebase, plan the work, delegate it and review the result. You don't implement.
 
