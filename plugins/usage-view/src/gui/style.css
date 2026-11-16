@@ -557,6 +557,13 @@
   flex-direction: column;
   gap: 8px;
 }
+/* As wide as the grid and centered, so the footer lines up with the grid's edges. */
+.uv-heatmap-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 auto;
+}
 .uv-heatmap-grid {
   position: relative;
 }
@@ -598,6 +605,7 @@
 .uv-heatmap-foot {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
 }
 .uv-legend {
@@ -619,50 +627,8 @@
   border-radius: 2px;
 }
 
-/* sessions ----------------------------------------------------------------------------------------------------------*/
+/* pill --------------------------------------------------------------------------------------------------------------*/
 
-.uv-sessions {
-  display: flex;
-  flex-direction: column;
-  margin: 0 -6px;
-}
-.uv-session {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 6px;
-  border: 0;
-  border-radius: var(--uv-radius);
-  background: transparent;
-  text-align: left;
-  cursor: pointer;
-}
-.uv-session:hover {
-  background: var(--uv-hover);
-}
-.uv-session-main {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  flex: 1;
-  min-width: 0;
-}
-.uv-session-title,
-.uv-session-meta {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  min-width: 0;
-}
-.uv-session-nums {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 2px;
-  flex-shrink: 0;
-  font-variant-numeric: tabular-nums;
-}
 .uv-pill {
   display: inline-flex;
   align-items: center;

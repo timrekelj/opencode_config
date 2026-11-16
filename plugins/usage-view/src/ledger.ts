@@ -14,7 +14,7 @@ export const DEFAULT_RETENTION_DAYS = 92
 const PREFIX = "session/"
 
 /** slot, providerID, modelID, steps, input, output, reasoning, cache read, cache write, cost */
-type Row = [number, string, string, number, number, number, number, number, number, number]
+export type Row = [number, string, string, number, number, number, number, number, number, number]
 
 interface Entry {
   projectID: string
@@ -40,7 +40,7 @@ interface Storage {
   }>
 }
 
-interface Database {
+export interface Database {
   all(sql: string, ...params: unknown[]): any[]
   close(): void
 }
@@ -71,9 +71,9 @@ export function defaultDatabasePath(channel?: string): string {
   return existsSync(main) || !named || !existsSync(named) ? main : named
 }
 
-const emptyTokens = (): TokenTotals => ({ input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } })
+export const emptyTokens = (): TokenTotals => ({ input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } })
 
-function addRow(target: { steps: number; cost: number; tokens: TokenTotals }, row: Row) {
+export function addRow(target: { steps: number; cost: number; tokens: TokenTotals }, row: Row) {
   target.steps += row[3]
   target.tokens.input += row[4]
   target.tokens.output += row[5]
@@ -83,8 +83,13 @@ function addRow(target: { steps: number; cost: number; tokens: TokenTotals }, ro
   target.cost += row[9]
 }
 
+/** A session and all its descendants, as a CTE named `tree(id)` to prepend to a query; takes the root id as `?`. */
+export const SUBTREE = `WITH RECURSIVE tree(id) AS (
+  SELECT ? UNION SELECT s.id FROM session_v2 s JOIN tree t ON s.parent_id = t.id
+)`
+
 /** Per-model usage columns over `session_message m`, to group by slot, provider and model. */
-const USAGE_COLUMNS = `(m.time_created / ${SLOT_MS}) * ${SLOT_MS} AS slot,
+export const USAGE_COLUMNS = `(m.time_created / ${SLOT_MS}) * ${SLOT_MS} AS slot,
   json_extract(m.data, '$.model.providerID') AS provider,
   json_extract(m.data, '$.model.id') AS model,
   count(*) AS steps,
@@ -96,7 +101,7 @@ const USAGE_COLUMNS = `(m.time_created / ${SLOT_MS}) * ${SLOT_MS} AS slot,
   sum(coalesce(json_extract(m.data, '$.cost'), 0)) AS cost`
 
 /** A result row of USAGE_COLUMNS as a Row, or undefined when the message has no model. */
-function toRow(r: any): Row | undefined {
+export function toRow(r: any): Row | undefined {
   if (typeof r.provider !== "string" || typeof r.model !== "string") return undefined
   return [
     Number(r.slot),
@@ -113,7 +118,7 @@ function toRow(r: any): Row | undefined {
 }
 
 /** The row's model in `models`, added empty if missing. */
-function modelBucket(models: Map<string, RetainedModel>, row: Row): RetainedModel {
+export function modelBucket(models: Map<string, RetainedModel>, row: Row): RetainedModel {
   const key = `${row[1]}/${row[2]}`
   let model = models.get(key)
   if (!model) {
@@ -132,7 +137,7 @@ const isEntry = (value: unknown): value is Entry =>
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
 /** Maps a time to its `YYYY-MM-DD` in the given zone (or the server's own when unknown), cached per slot. */
-function dayFormatter(timezone: string | undefined): (time: number) => string {
+export function dayFormatter(timezone: string | undefined): (time: number) => string {
   const options: Intl.DateTimeFormatOptions = { year: "numeric", month: "2-digit", day: "2-digit" }
   let format: Intl.DateTimeFormat
   try {
@@ -444,8 +449,15 @@ export class Ledger {
   /**
    * Usage per local day in `[from, to)`, optionally limited to one project. Live sessions are read from OpenCode's
    * database in quarter-hour slots; deleted ones come from the ledger. Days without usage are left out.
+   * With a session, only that session and its subagents count, and the project and the ledger are ignored.
    */
-  async daily(input: { from: number; to: number; project?: string; timezone?: string }): Promise<DailyResult> {
+  async daily(input: {
+    from: number
+    to: number
+    project?: string
+    session?: string
+    timezone?: string
+  }): Promise<DailyResult> {
     await this.fresh()
     const db = this.db
     if (!db) throw new Error("OpenCode database is not open")
@@ -461,31 +473,47 @@ export class Ledger {
       addRow(modelBucket(models, row), row)
     }
 
+    const project = input.session ? undefined : input.project
     const rows = db.all(
-      `SELECT ${USAGE_COLUMNS}
+      `${input.session ? SUBTREE : ""}
+       SELECT ${USAGE_COLUMNS}
        FROM session_message m JOIN session_v2 s ON s.id = m.session_id
        WHERE m.type = 'assistant'
          AND json_extract(m.data, '$.tokens') IS NOT NULL
          AND m.time_created >= ? AND m.time_created < ?
-         ${input.project ? "AND (s.project_id = ? OR s.id IN (SELECT value FROM json_each(?)))" : ""}
+         ${input.session ? "AND m.session_id IN (SELECT id FROM tree)" : ""}
+         ${project ? "AND (s.project_id = ? OR s.id IN (SELECT value FROM json_each(?)))" : ""}
        GROUP BY slot, provider, model`,
-      ...(input.project
-        ? [input.from, input.to, input.project, JSON.stringify(this.adoptedIDs(input.project))]
-        : [input.from, input.to]),
+      ...(input.session ? [input.session] : []),
+      input.from,
+      input.to,
+      ...(project ? [project, JSON.stringify(this.adoptedIDs(project))] : []),
     )
     for (const r of rows) {
       const row = toRow(r)
       if (row) add(row)
     }
+    if (input.session) return this.days(days)
     for (const entry of this.deleted.values()) {
       if (!Ledger.inProject(entry, input.project)) continue
       for (const row of entry.rows) if (row[0] >= input.from && row[0] < input.to) add(row)
     }
+    return this.days(days)
+  }
+
+  private days(days: Map<string, Map<string, RetainedModel>>): DailyResult {
     return {
       days: [...days]
         .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
         .map(([date, models]) => ({ date, models: [...models.values()] })),
     }
+  }
+
+  /** Runs a read-only query function against OpenCode's database, after making sure it is open. */
+  async read<T>(fn: (db: Database) => T): Promise<T> {
+    await this.fresh()
+    if (!this.db) throw new Error("OpenCode database is not open")
+    return fn(this.db)
   }
 
   /** Syncs now, after each finished step or deletion, and every few minutes. Returns a cleanup. */

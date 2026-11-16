@@ -1,8 +1,9 @@
 import { Plugin } from "@opencode/plugin"
-import { DEFAULT_RETENTION_DAYS, defaultDatabasePath, Ledger } from "./ledger"
+import { DEFAULT_RETENTION_DAYS, defaultDatabasePath, Ledger, type Database } from "./ledger"
 import { Limits } from "./limits"
 import { parseAliases, Pricing } from "./pricing"
 import { UsageView } from "./rpc"
+import { sessionUsage } from "./session"
 import type { ModelKey } from "./types"
 
 // The server loads the plugin once per location; they all share one ledger. The key is versioned and each entry is
@@ -65,11 +66,23 @@ export default Plugin.define({
           project: typeof i?.project === "string" ? i.project : undefined,
         }),
       ),
-      daily: handle<{ from?: number; to?: number; project?: string; timezone?: string }>((i) =>
+      session: handle<{ sessionID: string; ranges?: { from?: number; to: number }[]; timezone?: string; tools?: boolean }>(
+        (i) =>
+          ledger.read((db: Database) =>
+            sessionUsage(db, {
+              sessionID: String(i?.sessionID),
+              ranges: Array.isArray(i?.ranges) ? i.ranges : [],
+              timezone: typeof i?.timezone === "string" ? i.timezone : undefined,
+              tools: i?.tools === true,
+            }),
+          ),
+      ),
+      daily: handle<{ from?: number; to?: number; project?: string; session?: string; timezone?: string }>((i) =>
         ledger.daily({
           from: typeof i?.from === "number" ? i.from : 0,
           to: typeof i?.to === "number" ? i.to : Date.now(),
           project: typeof i?.project === "string" ? i.project : undefined,
+          session: typeof i?.session === "string" ? i.session : undefined,
           timezone: typeof i?.timezone === "string" ? i.timezone : undefined,
         }),
       ),

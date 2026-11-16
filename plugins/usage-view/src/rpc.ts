@@ -39,6 +39,49 @@ const usageRanges = {
   },
 } as const
 
+const modelUsage = {
+  type: "array",
+  items: { type: "object", properties: { model: modelRef, steps: num, cost: num, tokens } },
+} as const
+
+const toolTotals = {
+  type: "object",
+  properties: { calls: num, succeeded: num, failed: num, unfinished: num },
+} as const
+
+const sessionRanges = {
+  type: "array",
+  items: {
+    type: "object",
+    properties: {
+      range: { type: "object", properties: { from: num, to: num } },
+      sessions: num,
+      subagents: num,
+      prompts: num,
+      steps: num,
+      cost: num,
+      tokens,
+      models: modelUsage,
+      activeDays: num,
+      streak: num,
+      activity: { type: "array", items: { type: "object", properties: { date: str, steps: num } } },
+      tools: {
+        type: "object",
+        properties: {
+          totals: toolTotals,
+          usage: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: { name: str, calls: num, succeeded: num, failed: num, unfinished: num, durationP50: num },
+            },
+          },
+        },
+      },
+    },
+  },
+} as const
+
 export const UsageView = Rpc.define({
   id: "usage-view",
   methods: {
@@ -90,10 +133,31 @@ export const UsageView = Rpc.define({
       },
       errors,
     },
+    session: {
+      input: {
+        type: "object",
+        properties: {
+          sessionID: str,
+          ranges: {
+            type: "array",
+            items: { type: "object", properties: { from: num, to: num }, required: ["to"] },
+          },
+          timezone: str,
+          tools: { type: "boolean" },
+        },
+        required: ["sessionID", "ranges"],
+      },
+      output: {
+        type: "object",
+        properties: { earliest: num, ranges: sessionRanges },
+        required: ["ranges"],
+      },
+      errors,
+    },
     daily: {
       input: {
         type: "object",
-        properties: { from: num, to: num, project: str, timezone: str },
+        properties: { from: num, to: num, project: str, session: str, timezone: str },
         required: ["from", "to"],
       },
       output: {

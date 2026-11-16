@@ -31,18 +31,23 @@ access token, so don't poll it aggressively. API-key and proxy accounts report n
 ## Features
 
 - **Range**: Today (hourly), 7 days and 30 days (daily), All time (daily, or about 12 weekly buckets).
-- **Scope**: this project (the current session's project) or all projects.
+- **Scope**: this session (the current session plus all its subagent sessions, recursively), this project (the current
+  session's project) or all projects. Session and Project need an open session; without one, a saved choice falls back
+  to all projects. In session scope the server part's `session` RPC answers everything, because `session.stats` cannot
+  filter by session: sessions and subagents count the sessions of the tree with a message in the range, and deleted
+  sessions are not included (they are gone from the database). The heatmap follows the same tree.
 - **Summary**: estimated API cost, actual billed cost, total tokens (input / output+reasoning / cache read / cache
   write), sessions / prompts / steps / subagents, active days and streak.
 - **Over time** line chart, by cost or tokens, with a tooltip on each point.
 - **Past year** heatmap, GitHub-style: one square per day, shaded by the chart's metric (cost or tokens) in
-  quartiles of the active days. It ignores the range but follows the scope, shows as many weeks as fit (up to 53),
-  and its header gives the year's estimated cost, active days and current streak. Hover a square for the day's
-  cost, tokens and steps. Deleted sessions count.
-- **By model**: steps, tokens, estimated cost and share.
+  quartiles of the active days. It ignores the range but follows the scope and its header gives the year's estimated
+  cost, active days and current streak. Hover a square for the day's cost, tokens and steps. Deleted sessions count.
+  Squares are 10px and show as many weeks as fit (at least 8). Once all 53 weeks fit, the squares grow up to 16px, and
+  the grid is centered with its legend lined up under its edges.
+- **By model**: steps, tokens, cache read, cache hit rate (cache read / (input + cache read + cache write); the tooltip
+  has the exact cache read and write counts and the savings; models that reported no cache tokens show "–"), estimated
+  cost and share.
 - **Tools**: calls, failure rate and median (p50) duration.
-- **Top sessions** active in the range, sorted by tokens. Click one to open it. These are lifetime totals for each
-  session, priced at the session's current model, so they're approximate (≈).
 
 ## How cost is estimated
 
@@ -86,23 +91,27 @@ marked deleted and its usage is added to OpenCode's own stats for the same range
   `SELECT`s. Set the `database` option to use another file.
 - It syncs at startup, about 2 seconds after each finished step, compaction or deletion, and every 5 minutes. Each
   sync only re-reads sessions with messages written since the last one.
-- Kept: tokens, cost, steps, and session and subagent counts. Not kept: prompts, tool calls, active days and the
-  sessions list.
+- Kept: tokens, cost, steps, and session and subagent counts. Not kept: prompts, tool calls, active days.
 - Usage from before the plugin was first loaded is only kept for sessions that still existed then.
 - Kept usage expires after 92 days, like t3code's: slots older than that are dropped, and a deleted session's copy is
   removed once none are left. Set the `retentionDays` option to change it.
 
 ## Layout
 
-- `src/index.ts`: server part. Registers the `usage-view` RPC (`prices`, `retained`, `daily`, `limits`) and starts
-  the ledger.
+- `src/index.ts`: server part. Registers the `usage-view` RPC (`prices`, `retained`, `session`, `daily`, `limits`) and
+  starts the ledger.
 - `src/ledger.ts`: the copy of each session's usage, so deleted sessions still count. Also answers `daily`: usage per
   local day for the heatmap, read from the database in hour slots (live sessions) plus the ledger (deleted ones).
+- `src/session.ts`: the `session` RPC. `session.stats`-shaped usage (totals, models, tools with p50 duration, active
+  days, streak, per-day activity) of one session and its subagents, per time range, from a recursive query on
+  `session_v2.parent_id`, plus the earliest message so the All time buckets can be laid out. `daily` takes the same
+  tree through its optional `session`.
 - `src/pricing.ts`: models.dev fetch, cache and model matching.
 - `src/rpc.ts`: RPC definition, in portable JSON Schema.
 - `src/gui.tsx`: GUI entry. Registers the panel, menu item, command and settings page.
-- `src/gui/api.ts`: loads the data with `session.stats` (one call per chart bucket, in parallel), `session.list` and
-  the `prices` and `retained` RPCs, and adds the deleted sessions' usage to the stats. The heatmap loads separately
+- `src/gui/api.ts`: loads the data with `session.stats` (one call per chart bucket, in parallel), and
+  the `prices` and `retained` RPCs, and adds the deleted sessions' usage to the stats. In session scope it makes one
+  `session` RPC call with every range instead (two for All time, the first to find the earliest message). The heatmap loads separately
   through the `daily` RPC, so changing the range does not refetch the year.
 - `src/gui/usage.tsx`: the view. `src/gui/format.ts` holds the number formatting. `src/gui/style.css` holds the styles.
 

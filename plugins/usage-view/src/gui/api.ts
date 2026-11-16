@@ -10,15 +10,16 @@ import {
   type PricesResult,
   type RetainedRange,
   type RetainedResult,
+  type SessionRange,
+  type SessionResult,
 } from "../types"
-import { totalTokens, type Tokens } from "./format"
+import type { Tokens } from "./format"
 
 type Client = Context["client"]
 export type Stats = Awaited<ReturnType<Client["session"]["stats"]>>
-export type SessionInfo = Awaited<ReturnType<Client["session"]["list"]>>["data"][number]
 
 export type RangeId = "today" | "7d" | "30d" | "all"
-export type Scope = "project" | "all"
+export type Scope = "session" | "project" | "all"
 
 export const RANGES: { value: RangeId; label: string; short: string }[] = [
   { value: "today", label: "Today", short: "Today" },
@@ -44,9 +45,6 @@ export interface UsageData {
   to: number
   totals: Stats
   buckets: Bucket[]
-  sessions: SessionInfo[]
-  /** True when the session scan stopped before reaching the start of the range. */
-  sessionsTruncated: boolean
   prices: Record<string, Price | null>
   pricesError?: string
   /** Usage of deleted sessions included in the totals, if any. */
@@ -56,10 +54,6 @@ export interface UsageData {
 
 const HOUR = 60 * 60 * 1000
 const DAY = 24 * HOUR
-const SESSION_PAGE = 200
-const SESSION_PAGES = 10
-/** Top sessions shown, and priced. */
-export const SESSION_LIMIT = 10
 /** The heatmap shows up to 53 weeks; a spare week covers the Sunday alignment of the first column. */
 const ACTIVITY_DAYS = 54 * 7
 
@@ -143,24 +137,10 @@ export function errorMessage(error: unknown): string {
   return String(error)
 }
 
-async function listSessions(client: Client, project: string | undefined, from: number | undefined, signal: AbortSignal) {
-  const all: SessionInfo[] = []
-  let cursor: string | undefined
-  for (let page = 0; page < SESSION_PAGES; page++) {
-    const response = await client.session.list({ limit: SESSION_PAGE, order: "desc", project, cursor }, { signal })
-    all.push(...response.data)
-    const last = response.data.at(-1)
-    const done =
-      response.data.length < SESSION_PAGE || !response.cursor.next || (from !== undefined && last && last.time.updated < from)
-    if (done) return { sessions: all, truncated: false }
-    cursor = response.cursor.next ?? undefined
-  }
-  return { sessions: all, truncated: true }
-}
-
 type UsageRpc = {
   prices(input: object, options: object): Promise<PricesResult>
   retained(input: object, options: object): Promise<RetainedResult>
+  session(input: object, options: object): Promise<SessionResult>
   daily(input: object, options: object): Promise<DailyResult>
   limits(input: object, options: object): Promise<LimitsResult>
 }
@@ -177,7 +157,7 @@ export interface ActivityData {
 /** Usage per day over the past year, for the heatmap. Independent of the selected range. */
 export async function loadActivity(
   ctx: Pick<Context, "client">,
-  input: { project?: string; directory?: string },
+  input: { project?: string; session?: string; directory?: string },
   signal: AbortSignal,
 ): Promise<ActivityData> {
   const client = ctx.client
@@ -192,7 +172,7 @@ export async function loadActivity(
   const rpc = client.rpc(UsageView) as unknown as UsageRpc
   const rpcOptions = directory ? { location: { directory }, signal } : { signal }
 
-  const result = await rpc.daily({ from, to: now, project: input.project, timezone: timezone() }, rpcOptions)
+  const result = await rpc.daily({ from, to: now, project: input.project, session: input.session, timezone: timezone() }, rpcOptions)
   const days: Record<string, DailyUsage> = {}
   const models = new Map<string, ModelKey>()
   for (const day of result.days) {
@@ -255,9 +235,26 @@ function addRetained(stats: Stats, extra: RetainedRange | undefined): Stats {
   }
 }
 
+/** The server's per-session aggregate in the shape of `session.stats`. */
+const toStats = (r: SessionRange): Stats =>
+  ({
+    range: r.range,
+    sessions: r.sessions,
+    subagents: r.subagents,
+    prompts: r.prompts,
+    steps: r.steps,
+    tokens: r.tokens,
+    cost: r.cost,
+    tools: r.tools ? { mode: "detail", ...r.tools } : { mode: "none" },
+    activeDays: r.activeDays,
+    streak: r.streak,
+    activity: r.activity,
+    models: r.models,
+  }) as unknown as Stats
+
 export async function loadUsage(
   ctx: Pick<Context, "client">,
-  input: { range: RangeId; project?: string; directory?: string },
+  input: { range: RangeId; project?: string; session?: string; directory?: string },
   signal: AbortSignal,
 ): Promise<UsageData> {
   // Read ctx.client on every load: it changes after the server restarts.
@@ -267,12 +264,17 @@ export async function loadUsage(
   const tz = timezone()
   const base = { project: input.project, timezone: tz }
 
-  const listed = listSessions(client, input.project, from, signal)
-  // The RPC is answered per location; without a session, borrow the directory of a listed one.
-  const rpcOptions = (input.directory ? Promise.resolve(input.directory) : listed.then((l) => l.sessions[0]?.location.directory)).then(
-    (directory) => (directory ? { location: { directory }, signal } : { signal }),
-  )
+  // The RPC is answered per location; without a session, borrow the directory of any recent one.
+  const rpcOptions = (
+    input.directory
+      ? Promise.resolve(input.directory)
+      : client.session.list({ limit: 1, order: "desc" }, { signal }).then((recent) => recent.data[0]?.location.directory)
+  ).then((directory) => (directory ? { location: { directory }, signal } : { signal }))
   const rpc = client.rpc(UsageView) as unknown as UsageRpc
+
+  // A session and its subagents come from the server part alone: OpenCode's stats cannot filter by session.
+  const sessionRanges = async (ranges: { from?: number; to: number }[], tools: boolean) =>
+    rpc.session({ sessionID: input.session, ranges, timezone: tz, tools }, await rpcOptions)
 
   // Deleted sessions are optional extra data: a failure here must not break the view.
   let retainedError: string | undefined
@@ -302,27 +304,46 @@ export async function loadUsage(
       withRetained ? retained(shells.map((bucket) => ({ from: bucket.from, to: Math.min(bucket.to, now) }))) : undefined,
     ])
 
-  // Only "all" needs the earliest usage to lay out its buckets; the other ranges load them alongside the totals.
-  const known = input.range === "all" ? undefined : makeBuckets(input.range, now, now)
-  const [liveTotals, list, retainedTotal, knownBuckets] = await Promise.all([
-    client.session.stats({ ...base, from, to: now, tools: "detail" }, { signal }),
-    listed,
-    retained([{ from, to: now }]),
-    known && loadBuckets(known, true),
-  ])
-  const earliest = Math.min(liveTotals.range.from || now, retainedTotal?.earliest ?? now)
-  const totals = addExtra(liveTotals, retainedTotal, 0)
+  let totals: Stats
+  let buckets: Bucket[]
+  let retainedRange: RetainedRange | undefined
+  if (input.session) {
+    const bucketRanges = (shells: Omit<Bucket, "stats">[]) =>
+      shells.filter((bucket) => bucket.from <= now).map((bucket) => ({ from: bucket.from, to: Math.min(bucket.to, now) }))
+    const fill = (shells: Omit<Bucket, "stats">[], ranges: SessionRange[]): Bucket[] =>
+      shells.map((bucket, index) => (bucket.from > now ? bucket : { ...bucket, stats: toStats(ranges[index]!) }))
+    if (input.range === "all") {
+      // The first call gives the earliest message, which lays out the buckets of the second.
+      const first = await sessionRanges([{ to: now }], true)
+      totals = toStats(first.ranges[0]!)
+      const shells = makeBuckets(input.range, now, first.earliest ?? now)
+      buckets = fill(shells, (await sessionRanges(bucketRanges(shells), false)).ranges)
+    } else {
+      const shells = makeBuckets(input.range, now, now)
+      const result = await sessionRanges([{ from, to: now }, ...bucketRanges(shells)], true)
+      totals = toStats(result.ranges[0]!)
+      buckets = fill(shells, result.ranges.slice(1).map((r) => ({ ...r, tools: undefined })))
+    }
+  } else {
+    // Only "all" needs the earliest usage to lay out its buckets; the other ranges load them alongside the totals.
+    const known = input.range === "all" ? undefined : makeBuckets(input.range, now, now)
+    const [liveTotals, retainedTotal, knownBuckets] = await Promise.all([
+      client.session.stats({ ...base, from, to: now, tools: "detail" }, { signal }),
+      retained([{ from, to: now }]),
+      known && loadBuckets(known, true),
+    ])
+    const earliest = Math.min(liveTotals.range.from || now, retainedTotal?.earliest ?? now)
+    totals = addExtra(liveTotals, retainedTotal, 0)
 
-  const shells = known ?? makeBuckets(input.range, now, earliest)
-  const [bucketStats, retainedBuckets] = knownBuckets ?? (await loadBuckets(shells, retainedTotal?.earliest !== undefined))
-  const buckets: Bucket[] = shells.map((bucket, index) => {
-    const stats = bucketStats[index]
-    return stats ? { ...bucket, stats: addExtra(stats, retainedBuckets, index) } : bucket
-  })
-
-  const sessions = list.sessions
-    .filter((s) => from === undefined || s.time.updated >= from)
-    .sort((a, b) => totalTokens(b.tokens) - totalTokens(a.tokens))
+    const shells = known ?? makeBuckets(input.range, now, earliest)
+    const [bucketStats, retainedBuckets] =
+      knownBuckets ?? (await loadBuckets(shells, retainedTotal?.earliest !== undefined))
+    buckets = shells.map((bucket, index) => {
+      const stats = bucketStats[index]
+      return stats ? { ...bucket, stats: addExtra(stats, retainedBuckets, index) } : bucket
+    })
+    retainedRange = retainedTotal?.ranges[0]
+  }
 
   const models = new Map<string, ModelKey>()
   const addModel = (m: { providerID: string; id: string } | undefined) => {
@@ -330,7 +351,6 @@ export async function loadUsage(
   }
   totals.models.forEach((m) => addModel(m.model))
   buckets.forEach((b) => b.stats?.models.forEach((m) => addModel(m.model)))
-  sessions.slice(0, SESSION_LIMIT).forEach((s) => addModel(s.model))
 
   let prices: Record<string, Price | null> = {}
   let pricesError: string | undefined
@@ -344,15 +364,12 @@ export async function loadUsage(
     }
   }
 
-  const retainedRange = retainedTotal?.ranges[0]
   return {
     range: input.range,
     from,
     to: now,
     totals,
     buckets,
-    sessions,
-    sessionsTruncated: list.truncated,
     prices,
     pricesError,
     retained: retainedRange && retainedRange.steps > 0 ? retainedRange : undefined,

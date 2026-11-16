@@ -7,18 +7,15 @@ import {
   loadActivity,
   loadUsage,
   RANGES,
-  SESSION_LIMIT,
   startOfDay,
   type ActivityData,
   type Bucket,
   type RangeId,
   type Scope,
-  type SessionInfo,
   type UsageData,
 } from "./api"
 import { LimitsView } from "./limits"
 import {
-  ago,
   cacheSavings,
   costParts,
   dollars,
@@ -140,23 +137,40 @@ export function UsageView(props: UsageViewProps) {
 
   const projectID = () => props.session()?.project?.id
   const directory = () => props.session()?.directory
-  const scope = (): Scope => (props.prefs.scope === "project" && projectID() ? "project" : "all")
+  const sessionID = () => props.session()?.id
+  // A saved scope that needs a session or project falls back to all projects when there is none.
+  const scope = (): Scope =>
+    props.prefs.scope === "session" && sessionID()
+      ? "session"
+      : props.prefs.scope === "project" && projectID()
+        ? "project"
+        : "all"
+  const sessionKey = () => (scope() === "session" ? sessionID() : undefined)
+  const projectKey = () => (scope() === "project" ? projectID() : undefined)
+
+  const sessionTitle = createLatest(sessionID, async (id, signal) => {
+    try {
+      return (await props.ctx.client.session.get({ sessionID: id }, { signal })).title
+    } catch {
+      return undefined
+    }
+  })
 
   // The directory only routes the RPC, so switching sessions within a project does not reload.
   const usage = createLatest(
-    () => JSON.stringify({ range: props.prefs.range, project: scope() === "project" ? projectID() : undefined, v: version() }),
+    () => JSON.stringify({ range: props.prefs.range, project: projectKey(), session: sessionKey(), v: version() }),
     (key, signal) => {
-      const { range, project } = JSON.parse(key) as { range: RangeId; project?: string }
-      return loadUsage(props.ctx, { range, project, directory: untrack(directory) }, signal)
+      const { range, project, session } = JSON.parse(key) as { range: RangeId; project?: string; session?: string }
+      return loadUsage(props.ctx, { range, project, session, directory: untrack(directory) }, signal)
     },
   )
 
   // The past-year heatmap does not depend on the range, so it only reloads with the scope or a refresh.
   const activity = createLatest(
-    () => JSON.stringify({ project: scope() === "project" ? projectID() : undefined, v: version() }),
+    () => JSON.stringify({ project: projectKey(), session: sessionKey(), v: version() }),
     (key, signal) => {
-      const { project } = JSON.parse(key) as { project?: string }
-      return loadActivity(props.ctx, { project, directory: untrack(directory) }, signal)
+      const { project, session } = JSON.parse(key) as { project?: string; session?: string }
+      return loadActivity(props.ctx, { project, session, directory: untrack(directory) }, signal)
     },
   )
 
@@ -198,6 +212,14 @@ export function UsageView(props: UsageViewProps) {
           label="Scope"
           value={scope()}
           options={[
+            {
+              value: "session",
+              label: "Session",
+              disabled: !sessionID(),
+              title: sessionID()
+                ? `This session and its subagents${sessionTitle.latest ? `: ${sessionTitle.latest}` : ""}`
+                : "Open a session to see its usage",
+            },
             {
               value: "project",
               label: "Project",
@@ -278,7 +300,6 @@ export function UsageView(props: UsageViewProps) {
                 <Models data={d()} cost={total()!} />
                 <Tools ui={ui} data={d()} showAll={showAllTools()} toggle={() => setShowAllTools((v) => !v)} />
               </div>
-              <Sessions ctx={props.ctx} data={d()} prices={prices()} />
               <div class="uv-footnote">
                 Estimated cost uses public API list prices from models.dev and counts reasoning tokens as output. It is what
                 this usage would cost on pay-as-you-go API billing, not what you were charged.
@@ -630,9 +651,9 @@ function Chart(props: {
 /* heatmap ----------------------------------------------------------------------------------------------------------*/
 
 const GAP = 3
-/** Cells are 10px like GitHub's, growing to 14px when the whole year fits with room to spare. */
+/** Cells are 10px like GitHub's, growing to 16px when the whole year fits with room to spare. */
 const STEP_MIN = 10 + GAP
-const STEP_MAX = 14 + GAP
+const STEP_MAX = 16 + GAP
 const MAX_WEEKS = 53
 const MIN_WEEKS = 8
 /** Room for the weekday labels on the left and the month labels on top. */
@@ -826,67 +847,68 @@ function Heatmap(props: {
                   </div>
                 )}
               </Show>
-              <div class="uv-heatmap-grid">
-                <svg
-                  class="uv-heatmap-svg"
-                  width={svgWidth()}
-                  height={svgHeight()}
-                  role="img"
-                  aria-label={`${props.metric === "cost" ? "Estimated cost" : "Tokens"} per day over the last ${weeks()} weeks`}
-                >
-                  <For each={grid().months}>
-                    {(m) => (
-                      <text class="uv-heatmap-label" x={x(m.col)} y={10}>
-                        {m.label}
-                      </text>
-                    )}
-                  </For>
-                  <For each={[1, 3, 5]}>
-                    {(row) => (
-                      <text class="uv-heatmap-label" x={0} y={y(row) + cell() - 1}>
-                        {weekday(row)}
-                      </text>
-                    )}
-                  </For>
-                  <For each={grid().days}>
+              <div class="uv-heatmap-body" style={{ width: `${svgWidth()}px` }}>
+                <div class="uv-heatmap-grid">
+                  <svg
+                    class="uv-heatmap-svg"
+                    width={svgWidth()}
+                    height={svgHeight()}
+                    role="img"
+                    aria-label={`${props.metric === "cost" ? "Estimated cost" : "Tokens"} per day over the last ${weeks()} weeks`}
+                  >
+                    <For each={grid().months}>
+                      {(m) => (
+                        <text class="uv-heatmap-label" x={x(m.col)} y={10}>
+                          {m.label}
+                        </text>
+                      )}
+                    </For>
+                    <For each={[1, 3, 5]}>
+                      {(row) => (
+                        <text class="uv-heatmap-label" x={0} y={y(row) + cell() - 1}>
+                          {weekday(row)}
+                        </text>
+                      )}
+                    </For>
+                    <For each={grid().days}>
+                      {(day) => (
+                        <rect
+                          class={`uv-cell uv-level-${level(day.value)}`}
+                          x={x(day.col)}
+                          y={y(day.row)}
+                          width={cell()}
+                          height={cell()}
+                          rx={2}
+                          onPointerEnter={() => setHovered(day)}
+                          onPointerLeave={() => setHovered(null)}
+                        />
+                      )}
+                    </For>
+                  </svg>
+                  <Show when={hovered()}>
                     {(day) => (
-                      <rect
-                        class={`uv-cell uv-level-${level(day.value)}`}
-                        x={x(day.col)}
-                        y={y(day.row)}
-                        width={cell()}
-                        height={cell()}
-                        rx={2}
-                        onPointerEnter={() => setHovered(day)}
-                        onPointerLeave={() => setHovered(null)}
-                      />
+                      <span
+                        class={`uv-tip uv-tip-float uv-tip-above ${tipAlign(day())}`}
+                        style={{ left: `${x(day().col) + cell() / 2}px`, top: `${y(day().row)}px` }}
+                      >
+                        <strong>{date(day())}</strong>
+                        <Show when={day().steps > 0} fallback={<span>No usage</span>}>
+                          <span>
+                            {day().unknown ? "—" : dollars(day().est)} est. · {tokens(day().tokens)} tokens · {plural(day().steps, "step")}
+                          </span>
+                        </Show>
+                      </span>
                     )}
-                  </For>
-                </svg>
-                <Show when={hovered()}>
-                  {(day) => (
-                    <span
-                      class={`uv-tip uv-tip-float uv-tip-above ${tipAlign(day())}`}
-                      style={{ left: `${x(day().col) + cell() / 2}px`, top: `${y(day().row)}px` }}
-                    >
-                      <strong>{date(day())}</strong>
-                      <Show when={day().steps > 0} fallback={<span>No usage</span>}>
-                        <span>
-                          {day().unknown ? "—" : dollars(day().est)} est. · {tokens(day().tokens)} tokens · {plural(day().steps, "step")}
-                        </span>
-                      </Show>
-                    </span>
-                  )}
-                </Show>
-              </div>
-              <div class="uv-heatmap-foot">
-                <span class="uv-faint uv-xsmall">{props.metric === "cost" ? "est. cost" : "tokens"} per day</span>
-                <span class="uv-spacer" />
-                <span class="uv-legend" aria-hidden="true">
-                  <span>Less</span>
-                  <For each={[0, 1, 2, 3, 4]}>{(n) => <span class={`uv-legend-cell uv-level-${n}`} />}</For>
-                  <span>More</span>
-                </span>
+                  </Show>
+                </div>
+                <div class="uv-heatmap-foot">
+                  <span class="uv-faint uv-xsmall">{props.metric === "cost" ? "est. cost" : "tokens"} per day</span>
+                  <span class="uv-legend" aria-hidden="true">
+                    <span>Less</span>
+                    <For each={[0, 1, 2, 3, 4]}>{(n) => <span class={`uv-legend-cell uv-level-${n}`} />}</For>
+                    <span>More</span>
+                  </span>
+                </div>
               </div>
             </>
           )}
@@ -909,6 +931,8 @@ function Models(props: { data: UsageData; cost: Costed }) {
           steps: m.steps,
           tokens: size,
           tokenDetail: m.tokens as Tokens,
+          saved: cacheSavings(m.tokens, props.data.prices[modelKey(m.model)]),
+          priced: !!props.data.prices[modelKey(m.model)],
           est,
           billed: m.cost,
           share: useCost ? (est ?? 0) / props.cost.est : all > 0 ? size / all : 0,
@@ -929,6 +953,8 @@ function Models(props: { data: UsageData; cost: Costed }) {
               <th>Model</th>
               <th class="uv-num uv-hide-narrow">Steps</th>
               <th class="uv-num">Tokens</th>
+              <th class="uv-num uv-hide-narrow">Cache read</th>
+              <th class="uv-num uv-hide-narrow">Hit rate</th>
               <th class="uv-num">Est. cost</th>
               <th class="uv-num uv-share-col">Share</th>
             </tr>
@@ -952,6 +978,23 @@ function Models(props: { data: UsageData; cost: Costed }) {
                     title={`in ${exact(row.tokenDetail.input)} · out ${exact(row.tokenDetail.output + row.tokenDetail.reasoning)} · cache read ${exact(row.tokenDetail.cache.read)} · cache write ${exact(row.tokenDetail.cache.write)}`}
                   >
                     {tokens(row.tokens)}
+                  </td>
+                  <td class="uv-num uv-hide-narrow">
+                    {row.tokenDetail.cache.read === 0 && row.tokenDetail.cache.write === 0 ? "–" : tokens(row.tokenDetail.cache.read)}
+                  </td>
+                  <td
+                    class="uv-num uv-hide-narrow"
+                    title={
+                      row.tokenDetail.cache.read === 0 && row.tokenDetail.cache.write === 0
+                        ? "No cache tokens reported for this model"
+                        : `cache read ${exact(row.tokenDetail.cache.read)} · cache write ${exact(row.tokenDetail.cache.write)}${row.priced ? ` · saved ${dollars(row.saved)}` : ""}`
+                    }
+                  >
+                    {(() => {
+                      const t = row.tokenDetail
+                      const all = t.input + t.cache.read + t.cache.write
+                      return all > 0 && (t.cache.read > 0 || t.cache.write > 0) ? percent(t.cache.read / all) : "–"
+                    })()}
                   </td>
                   <td class="uv-num" title={row.billed > 0 ? `Billed ${dollars(row.billed)}` : row.est === undefined ? "No known price" : undefined}>
                     {dollars(row.est)}
@@ -1033,67 +1076,6 @@ function Tools(props: { ui: Context["ui"]; data: UsageData; showAll: boolean; to
           <button type="button" class="uv-more" onClick={props.toggle}>
             {props.showAll ? "Show fewer" : `Show all ${usage().length}`}
           </button>
-        </Show>
-      </Show>
-    </section>
-  )
-}
-
-function Sessions(props: { ctx: Context; data: UsageData; prices: Record<string, Price | null> }) {
-  const rows = () => props.data.sessions.slice(0, SESSION_LIMIT)
-  const open = (session: SessionInfo) => props.ctx.tabs.open({ server: "sidecar", id: session.id }, { focus: true })
-  const folder = (dir: string) => dir.split("/").filter(Boolean).at(-1) ?? dir
-  return (
-    <section class="uv-section">
-      <div class="uv-section-head">
-        <span class="uv-section-title">Top sessions</span>
-        <span class="uv-muted uv-small" title="Lifetime totals of sessions active in this range; cost uses each session's current model.">
-          lifetime totals · cost ≈
-        </span>
-      </div>
-      <Show when={rows().length > 0} fallback={<div class="uv-none">No sessions in this range.</div>}>
-        <div class="uv-sessions">
-          <For each={rows()}>
-            {(session) => {
-              const est = () => (session.model ? estimate(session.tokens, props.prices[modelKey(session.model)]) : undefined)
-              return (
-                <button type="button" class="uv-session" onClick={() => open(session)} title={session.title ?? session.id}>
-                  <span class="uv-session-main">
-                    <span class="uv-session-title">
-                      <Show when={session.parentID}>
-                        <span class="uv-pill">subagent</span>
-                      </Show>
-                      <span class="uv-ellipsis">{session.title || "Untitled session"}</span>
-                    </span>
-                    <span class="uv-session-meta uv-muted uv-small">
-                      <span class="uv-ellipsis">{folder(session.location.directory)}</span>
-                      <Show when={session.model}>
-                        {(model) => (
-                          <>
-                            <span>·</span>
-                            <span class="uv-ellipsis uv-hide-narrow">{model().id}</span>
-                          </>
-                        )}
-                      </Show>
-                      <span>·</span>
-                      <span class="uv-nowrap">{ago(session.time.updated)}</span>
-                    </span>
-                  </span>
-                  <span class="uv-session-nums">
-                    <span class="uv-strong" title={est() === undefined ? "No known price" : "Approximate: priced at the session's current model"}>
-                      {est() === undefined ? "—" : `≈${dollars(est())}`}
-                    </span>
-                    <span class="uv-muted uv-small" title={`${exact(totalTokens(session.tokens))} tokens`}>
-                      {tokens(totalTokens(session.tokens))}
-                    </span>
-                  </span>
-                </button>
-              )
-            }}
-          </For>
-        </div>
-        <Show when={props.data.sessionsTruncated}>
-          <div class="uv-none">Only the most recently active sessions were scanned.</div>
         </Show>
       </Show>
     </section>

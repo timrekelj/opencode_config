@@ -63,6 +63,42 @@ export interface DailyResult {
   days: DailyUsage[]
 }
 
+export interface SessionToolUsage {
+  name: string
+  calls: number
+  succeeded: number
+  failed: number
+  unfinished: number
+  /** Median of completed - ran, in ms, over the calls that finished. */
+  durationP50?: number
+}
+
+/** `session.stats`-compatible usage of one session tree in one time range. */
+export interface SessionRange {
+  range: { from: number; to: number }
+  sessions: number
+  subagents: number
+  prompts: number
+  steps: number
+  cost: number
+  tokens: TokenTotals
+  models: RetainedModel[]
+  activeDays: number
+  streak: number
+  activity: { date: string; steps: number }[]
+  /** Only when tools were asked for. */
+  tools?: {
+    totals: { calls: number; succeeded: number; failed: number; unfinished: number }
+    usage: SessionToolUsage[]
+  }
+}
+
+export interface SessionResult {
+  /** First message in the session tree, whatever the range. */
+  earliest?: number
+  ranges: SessionRange[]
+}
+
 export const modelKey = (model: ModelKey) => `${model.providerID}/${model.id}`
 
 export interface LimitWindow {
