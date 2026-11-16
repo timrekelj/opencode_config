@@ -31,7 +31,7 @@ Uses the GitHub CLI on the machine running the OpenCode server, so `gh auth logi
 - **Composer pill** showing the PR for the session's current branch and its check status.
 - **Commands**: *Open pull requests*, *Open pull request…* (searchable picker), *Open pull request for current branch*.
   You can bind keys to them in Settings > Shortcuts.
-- **Auto review**: when a `gh pr create` shell call succeeds, `/review <number>` runs in the session, queued after the
+- **Auto review**: when a `gh pr create` shell call succeeds, `/review <PR URL>` runs in the session, queued after the
   current turn, once per PR. If a subagent created the PR, it runs in the top-level session.
 
 ## Development

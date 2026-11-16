@@ -21,7 +21,7 @@ const text = (content: unknown): string => {
 }
 
 export async function autoReview(ctx: Plugin.Context) {
-  const review = async (url: string, number: number, sessionID: string) => {
+  const review = async (url: string, sessionID: string) => {
     const key = "auto-review/" + url
     if (await ctx.storage.get(key)) return
     await ctx.storage.set(key, true)
@@ -32,7 +32,7 @@ export async function autoReview(ctx: Plugin.Context) {
       if (!parent) break
       root = parent
     }
-    await ctx.session.command({ sessionID: root, name: "review", text: String(number), delivery: "queue" })
+    await ctx.session.command({ sessionID: root, name: "review", text: url, delivery: "queue" })
   }
 
   await ctx.tool.hook("execute.after", (event) => {
@@ -45,7 +45,7 @@ export async function autoReview(ctx: Plugin.Context) {
       if (typeof command !== "string") return
       const pr = createdPr(command, text(result.content))
       if (!pr) return
-      review(pr.url, pr.number, event.sessionID).catch((error) => console.error("[github] auto-review", error))
+      review(pr.url, event.sessionID).catch((error) => console.error("[github] auto-review", error))
     } catch (error) {
       console.error("[github] auto-review", error)
     }
