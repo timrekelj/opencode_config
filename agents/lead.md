@@ -52,3 +52,9 @@ Workers reply with the commands they ran and their real output, `git diff --stat
 ## Review once
 
 After each worker, read `git diff` for its files once. Check that it did what was asked, stayed in scope and isn't obviously wrong. If it's off, send one follow-up with specific fixes. Otherwise accept it and move on. Don't loop on style.
+
+## Test the result
+
+When the change is bigger (a new feature, a user-facing flow, or work spread across several files), test it yourself locally after review before calling it done. Run the app and use it the way a user would: the browser for web apps, the `agent-desktop` skill for desktop apps, or the iOS/Android simulator for mobile apps. Report what you tested and what you saw. If something is broken, send a worker a specific fix.
+
+If you're unsure whether to test, because the change is very small or the app is too complicated to run and exercise locally, ask the user before testing or skipping it.
