@@ -15,6 +15,10 @@
           "claude-agent/fable": "claude-fable-5-1"
         }
       }
+    },
+    {
+      "package": "/Users/timrekelj/.config/opencode/plugins/discord-presence",
+      "options": { "clientId": "1572915619710632017" }
     }
   ],
   "mcp": {
