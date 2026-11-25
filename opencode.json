@@ -104,7 +104,7 @@
   ],
   "formatter": true,
   "worktree": {
-    "directory": "../worktrees"
+    "directory": ".opencode/worktrees"
   },
   "compaction": {
     "auto": true,
