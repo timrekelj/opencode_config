@@ -113,7 +113,7 @@ export interface LimitWindow {
 }
 
 export interface LimitProvider {
-  id: "claude" | "codex"
+  id: "claude" | "codex" | "opencode"
   label: string
   /** Plan or account label, if known. Never includes tokens or emails. */
   account?: string
@@ -122,6 +122,21 @@ export interface LimitProvider {
   error?: string
   /** Banked rate-limit reset credits (Codex), if reported. */
   resetCredits?: number
+  /** Banked limit resets in detail (Codex), when the provider lists them. */
+  resets?: LimitReset[]
+  /** Provider page where limits and resets can be managed. */
+  manageUrl?: string
+}
+
+export interface LimitReset {
+  id: string
+  title?: string
+  /** "available" or whatever the provider reports. */
+  status: string
+  /** Epoch ms. */
+  grantedAt?: number
+  /** Epoch ms. */
+  expiresAt?: number
 }
 
 export interface LimitsResult {

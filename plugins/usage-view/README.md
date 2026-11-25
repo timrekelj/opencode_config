@@ -19,6 +19,16 @@ from local history, and not your bill):
   Shows the 5-hour session window, the weekly window, and plan-specific weekly windows (Opus, Sonnet, Claude Design) when present.
 - **Codex**: reads `~/.codex/auth.json` (or `$CODEX_HOME/auth.json`), takes the ChatGPT account id from the token JWT, and calls
   `https://chatgpt.com/backend-api/wham/usage`. Shows the primary and secondary windows and banked reset credits.
+  When credits are available it also calls `GET .../wham/rate-limit-reset-credits` and lists each reset with its expiry
+  (a failure there just falls back to the count). **Use reset** asks for confirmation, then
+  `POST .../wham/rate-limit-reset-credits/consume`; this refreshes the 5-hour and weekly windows and can't be undone.
+- **OpenCode Go**: reads the token from OpenCode's own database (`credential` table): an active `opencode-go` API key
+  first, otherwise the Console login (`opencode`). Calls `https://opencode.ai/inference/go/v1/usage` and shows the
+  5-hour session, weekly and monthly windows. The Console token is never refreshed here; if it expired, sign in again
+  with `/connect`. Without a Go subscription the endpoint's error is shown.
+
+Each card has a link to the provider's page for managing limits (claude.ai, ChatGPT Codex usage, OpenCode Console). Claude
+and OpenCode Go resets can't be redeemed through an API, so Claude's "Reset for free" and Extra Usage live on those pages.
 
 **Limit alerts**: while the app is open, the limits are checked every 5 minutes (the first check 20 seconds after
 start), panel open or not. When a window crosses 80% or 95%, a toast says how much is left and when it resets, with a
@@ -106,6 +116,7 @@ marked deleted and its usage is added to OpenCode's own stats for the same range
   days, streak, per-day activity) of one session and its subagents, per time range, from a recursive query on
   `session_v2.parent_id`, plus the earliest message so the All time buckets can be laid out. `daily` takes the same
   tree through its optional `session`.
+- `src/limits.ts`: the `limits` RPC: Claude Code, Codex and OpenCode Go subscription limits, cached for 60 seconds.
 - `src/pricing.ts`: models.dev fetch, cache and model matching.
 - `src/rpc.ts`: RPC definition, in portable JSON Schema.
 - `src/gui.tsx`: GUI entry. Registers the panel, menu item, command and settings page.

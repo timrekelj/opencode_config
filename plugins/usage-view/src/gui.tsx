@@ -56,7 +56,7 @@ export default Plugin.define({
       else ctx.layout.settings(TAB)
     }
 
-    // Limit alerts: toasts when a Claude Code or Codex window crosses 80% or 95%, panel open or not.
+    // Limit alerts: toasts when a Claude Code, Codex or OpenCode Go window crosses 80% or 95%, panel open or not.
     const stop = startAlerts(ctx, () => {
       setPrefs({ view: "limits" })
       open()

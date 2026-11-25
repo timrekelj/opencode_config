@@ -143,6 +143,7 @@ type UsageRpc = {
   session(input: object, options: object): Promise<SessionResult>
   daily(input: object, options: object): Promise<DailyResult>
   limits(input: object, options: object): Promise<LimitsResult>
+  redeemReset(input: object, options: object): Promise<LimitsResult>
 }
 
 export interface ActivityData {
@@ -193,7 +194,7 @@ export async function loadActivity(
   return { from, to: now, days, prices, pricesError }
 }
 
-/** Subscription limits from the providers (Claude Code, Codex), not from local history. */
+/** Subscription limits from the providers (Claude Code, Codex, OpenCode Go), not from local history. */
 export async function loadLimits(
   ctx: Pick<Context, "client">,
   input: { refresh?: boolean; directory?: string },
@@ -202,6 +203,20 @@ export async function loadLimits(
   const rpc = ctx.client.rpc(UsageView) as unknown as UsageRpc
   const options = input.directory ? { location: { directory: input.directory }, signal } : { signal }
   return rpc.limits({ refresh: input.refresh === true }, options)
+}
+
+/** Spends a banked Codex reset and returns the refreshed limits. It refreshes the Codex windows and cannot be undone. */
+export async function redeemReset(
+  ctx: Pick<Context, "client">,
+  input: { provider: "codex"; creditId: string; directory?: string },
+  signal?: AbortSignal,
+): Promise<LimitsResult> {
+  const rpc = ctx.client.rpc(UsageView) as unknown as UsageRpc
+  const options = {
+    ...(input.directory ? { location: { directory: input.directory } } : {}),
+    ...(signal ? { signal } : {}),
+  }
+  return rpc.redeemReset({ provider: input.provider, creditId: input.creditId }, options)
 }
 
 /** Adds the usage of deleted sessions to OpenCode's stats for the same range. */

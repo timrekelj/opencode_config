@@ -1,10 +1,11 @@
 import { execFile } from "node:child_process"
-import { createHash } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import { readFile } from "node:fs/promises"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { promisify } from "node:util"
-import type { LimitProvider, LimitWindow, LimitsResult } from "./types"
+import type { Database } from "./ledger"
+import type { LimitProvider, LimitReset, LimitWindow, LimitsResult } from "./types"
 
 const execFileAsync = promisify(execFile)
 
@@ -15,12 +16,21 @@ const execFileAsync = promisify(execFile)
  *   that could rotate the refresh token and sign Claude Code out.
  * - Codex: GET https://chatgpt.com/backend-api/wham/usage with the access
  *   token from ~/.codex/auth.json plus the ChatGPT account id from the JWT.
+ * - OpenCode Go: GET https://opencode.ai/inference/go/v1/usage with a Go API key
+ *   or the Console login token from OpenCode's own database (`credential` table).
+ *   The Console token is never refreshed here either.
  *
  * Results are cached briefly so opening the view never hammers the providers;
  * the OAuth usage endpoint is aggressively rate limited per access token.
  */
 
 const MIN_INTERVAL_MS = 60_000
+const CODEX_API = "https://chatgpt.com/backend-api/wham"
+const MANAGE_URLS = {
+  claude: "https://claude.ai/settings/usage",
+  codex: "https://chatgpt.com/codex/settings/usage",
+  opencode: "https://opencode.ai/console/go",
+} as const
 const CLAUDE_BETA = "oauth-2025-04-20"
 
 interface ClaudeCredentials {
@@ -80,8 +90,8 @@ const CLAUDE_WINDOWS: { key: string; id: string; label: string; kind: LimitWindo
   { key: "seven_day_omelette", id: "weekly-design", label: "Weekly Claude Design", kind: "weekly" },
 ]
 
-async function fetchClaude(credentials: ClaudeCredentials, signal: AbortSignal): Promise<LimitProvider> {
-  const response = await fetch("https://api.anthropic.com/api/oauth/usage", {
+async function fetchClaude(credentials: ClaudeCredentials, signal: AbortSignal, fetcher: typeof fetch = fetch): Promise<LimitProvider> {
+  const response = await fetcher("https://api.anthropic.com/api/oauth/usage", {
     headers: {
       Authorization: `Bearer ${credentials.accessToken}`,
       Accept: "application/json",
@@ -115,6 +125,7 @@ async function fetchClaude(credentials: ClaudeCredentials, signal: AbortSignal):
     id: "claude",
     label: "Claude Code",
     ...(credentials.subscriptionType ? { account: credentials.subscriptionType } : {}),
+    manageUrl: MANAGE_URLS.claude,
     windows,
   }
 }
@@ -156,16 +167,10 @@ interface CodexWindow {
   reset_after_seconds?: number
 }
 
-async function fetchCodex(auth: CodexAuth, signal: AbortSignal): Promise<LimitProvider> {
+export async function fetchCodex(auth: CodexAuth, signal: AbortSignal, fetcher: typeof fetch = fetch): Promise<LimitProvider> {
   if (!auth.accountId) throw new Error("no ChatGPT account id in the Codex credentials")
-  const response = await fetch("https://chatgpt.com/backend-api/wham/usage", {
-    headers: {
-      Authorization: `Bearer ${auth.accessToken}`,
-      "ChatGPT-Account-Id": auth.accountId,
-      Accept: "application/json",
-    },
-    signal,
-  })
+  const authed = { ...auth, accountId: auth.accountId }
+  const response = await fetcher(`${CODEX_API}/usage`, { headers: codexHeaders(authed), signal })
   if (!response.ok) throw new Error(`Codex usage API returned ${response.status}`)
   const body = await response.json()
   const limits = body?.rate_limit ?? body?.rateLimits ?? {}
@@ -190,18 +195,200 @@ async function fetchCodex(auth: CodexAuth, signal: AbortSignal): Promise<LimitPr
   push(limits.primary_window ?? limits.primary, "session", "Session window", "session")
   push(limits.secondary_window ?? limits.secondary, "weekly", "Weekly", "weekly")
   const credits = body?.rate_limit_reset_credits?.available_count
+  let resets: LimitReset[] = []
+  if (typeof credits === "number" && credits > 0) {
+    // The detailed list is optional: without it the count still shows.
+    try {
+      resets = await fetchCodexResets(authed, signal, fetcher)
+    } catch (error) {
+      if (signal.aborted) throw error
+    }
+  }
   return {
     id: "codex",
     label: "Codex",
     ...(typeof body?.plan_type === "string" ? { account: body.plan_type } : {}),
     ...(typeof credits === "number" && credits > 0 ? { resetCredits: credits } : {}),
+    ...(resets.length > 0 ? { resets } : {}),
+    manageUrl: MANAGE_URLS.codex,
     windows,
   }
 }
 
-const failed = (id: LimitProvider["id"], label: string, error: string): LimitProvider => ({ id, label, windows: [], error })
+const failed = (id: LimitProvider["id"], label: string, error: string): LimitProvider => ({
+  id,
+  label,
+  windows: [],
+  error,
+  manageUrl: MANAGE_URLS[id],
+})
+
+/** ISO string, epoch seconds or epoch ms to epoch ms. */
+function parseTime(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value < 1e11 ? value * 1000 : value
+  if (typeof value === "string" && value.trim()) {
+    const time = /^\d+(\.\d+)?$/.test(value.trim()) ? parseTime(Number(value)) : Date.parse(value)
+    return time !== undefined && Number.isFinite(time) ? time : undefined
+  }
+  return undefined
+}
+
+export function parseCodexResets(body: any): LimitReset[] {
+  const credits = Array.isArray(body?.credits) ? body.credits : []
+  const resets: LimitReset[] = []
+  for (const raw of credits) {
+    if (!raw || typeof raw.id !== "string" || !raw.id) continue
+    const grantedAt = parseTime(raw.granted_at)
+    const expiresAt = parseTime(raw.expires_at)
+    resets.push({
+      id: raw.id,
+      ...(typeof raw.title === "string" && raw.title ? { title: raw.title } : {}),
+      status: typeof raw.status === "string" ? raw.status : "unknown",
+      ...(grantedAt !== undefined ? { grantedAt } : {}),
+      ...(expiresAt !== undefined ? { expiresAt } : {}),
+    })
+  }
+  return resets
+}
+
+function codexHeaders(auth: CodexAuth & { accountId: string }): Record<string, string> {
+  return { Authorization: `Bearer ${auth.accessToken}`, "ChatGPT-Account-Id": auth.accountId, Accept: "application/json" }
+}
+
+async function fetchCodexResets(auth: CodexAuth & { accountId: string }, signal: AbortSignal, fetcher: typeof fetch): Promise<LimitReset[]> {
+  const response = await fetcher(`${CODEX_API}/rate-limit-reset-credits`, { headers: codexHeaders(auth), signal })
+  if (!response.ok) throw new Error(`Codex reset credits API returned ${response.status}`)
+  return parseCodexResets(await response.json())
+}
+
+/** Spends one banked Codex reset. This refreshes the 5-hour and weekly windows and cannot be undone. */
+export async function consumeCodexReset(auth: CodexAuth, creditId: string, signal: AbortSignal, fetcher: typeof fetch = fetch): Promise<void> {
+  if (!auth.accountId) throw new Error("no ChatGPT account id in the Codex credentials")
+  const response = await fetcher(`${CODEX_API}/rate-limit-reset-credits/consume`, {
+    method: "POST",
+    headers: { ...codexHeaders({ ...auth, accountId: auth.accountId }), "Content-Type": "application/json" },
+    body: JSON.stringify({ credit_id: creditId, redeem_request_id: randomUUID() }),
+    signal,
+  })
+  if (response.ok) return
+  let detail = ""
+  try {
+    const body: any = await response.json()
+    const message = body?.error?.message ?? body?.message ?? body?.detail ?? body?.error
+    if (typeof message === "string" && message) detail = `: ${message}`
+  } catch {}
+  throw new Error(`Codex reset failed (${response.status})${detail}`)
+}
+
+export interface GoCredentials {
+  token: string
+  account?: string
+  /** Epoch ms when the token expires (Console login only). */
+  expires?: number
+}
+
+export type GoReader = <T>(fn: (db: Database) => T) => Promise<T>
+
+function parseJson(value: unknown): any {
+  if (typeof value !== "string") return undefined
+  try {
+    return JSON.parse(value)
+  } catch {
+    return undefined
+  }
+}
+
+/** Picks the token from `credential` rows (newest first): a Go API key wins over the Console login. */
+export function selectGoCredentials(rows: { integration_id: string; value: unknown; time_updated?: number; active?: number }[]): GoCredentials | undefined {
+  const sorted = rows
+    .filter((row) => row.active === undefined || row.active === 1)
+    .sort((a, b) => Number(b.time_updated ?? 0) - Number(a.time_updated ?? 0))
+  for (const row of sorted) {
+    if (row.integration_id !== "opencode-go") continue
+    const value = parseJson(row.value)
+    if (value?.type === "key" && typeof value.key === "string" && value.key) return { token: value.key }
+  }
+  for (const row of sorted) {
+    if (row.integration_id !== "opencode") continue
+    const value = parseJson(row.value)
+    if (value?.type === "oauth" && typeof value.access === "string" && value.access) {
+      return {
+        token: value.access,
+        ...(typeof value.expires === "number" ? { expires: value.expires } : {}),
+        ...(typeof value.metadata?.orgName === "string" && value.metadata.orgName ? { account: value.metadata.orgName } : {}),
+      }
+    }
+  }
+  return undefined
+}
+
+async function goCredentials(read: GoReader | undefined): Promise<GoCredentials | undefined> {
+  if (!read) return undefined
+  try {
+    const rows = await read((db) =>
+      db.all(
+        "SELECT integration_id, value, time_updated, active FROM credential WHERE active = 1 AND integration_id IN ('opencode-go', 'opencode') ORDER BY time_updated DESC",
+      ),
+    )
+    return selectGoCredentials(rows)
+  } catch {
+    return undefined
+  }
+}
+
+const GO_WINDOWS: { key: string; id: string; label: string; kind: LimitWindow["kind"]; mins?: number }[] = [
+  { key: "rolling", id: "session", label: "Session (5 hours)", kind: "session", mins: 300 },
+  { key: "weekly", id: "weekly", label: "Weekly", kind: "weekly" },
+  { key: "monthly", id: "monthly", label: "Monthly", kind: "monthly" },
+]
+
+export function parseGoUsage(body: any, account?: string): LimitProvider {
+  const windows: LimitWindow[] = []
+  for (const spec of GO_WINDOWS) {
+    const raw = body?.usage?.[spec.key]
+    if (!raw || typeof raw.percent !== "number") continue
+    const resetsAt = toMinute(typeof raw.resetsAt === "string" ? Date.parse(raw.resetsAt) : NaN)
+    windows.push({
+      id: spec.id,
+      label: spec.label,
+      kind: spec.kind,
+      usedPercent: Math.max(0, Math.min(100, raw.status === "rate-limited" ? Math.max(100, raw.percent) : raw.percent)),
+      ...(Number.isFinite(resetsAt) ? { resetsAt } : {}),
+      ...(spec.mins ? { windowDurationMins: spec.mins } : {}),
+    })
+  }
+  return { id: "opencode", label: "OpenCode Go", ...(account ? { account } : {}), manageUrl: MANAGE_URLS.opencode, windows }
+}
+
+async function fetchGo(credentials: GoCredentials, signal: AbortSignal, fetcher: typeof fetch = fetch): Promise<LimitProvider> {
+  if (credentials.expires !== undefined && credentials.expires <= Date.now()) {
+    throw new Error("OpenCode Console token expired; sign in again with /connect")
+  }
+  const response = await fetcher("https://opencode.ai/inference/go/v1/usage", {
+    headers: { Authorization: `Bearer ${credentials.token}`, Accept: "application/json", "User-Agent": "usage-view/0.1" },
+    signal,
+  })
+  if (response.status === 401) throw new Error("OpenCode credentials invalid; sign in again with /connect")
+  if (response.status === 403) {
+    let message = "OpenCode Go subscription required."
+    try {
+      const body: any = await response.json()
+      if (typeof body?.error?.message === "string" && body.error.message) message = body.error.message
+    } catch {}
+    throw new Error(message)
+  }
+  if (!response.ok) throw new Error(`OpenCode Go usage API returned ${response.status}`)
+  return parseGoUsage(await response.json(), credentials.account)
+}
+
+export { fetchGo }
 
 export class Limits {
+  constructor(
+    private readonly read?: GoReader,
+    private readonly fetcher: typeof fetch = fetch,
+  ) {}
+
   private cache: { at: number; result: LimitsResult } | undefined
   /** The check in flight, shared by concurrent callers, with the signal it runs under. */
   private inflight: { promise: Promise<LimitsResult>; signal: AbortSignal } | undefined
@@ -225,6 +412,18 @@ export class Limits {
     }
   }
 
+  /** Spends a banked Codex reset, then re-checks every provider. */
+  async redeemReset(provider: string, creditId: string, signal: AbortSignal): Promise<LimitsResult> {
+    if (provider !== "codex") throw new Error(`${provider} resets cannot be redeemed here`)
+    if (typeof creditId !== "string" || !creditId) throw new Error("missing reset id")
+    const auth = await codexAuth()
+    if (!auth) throw new Error("not signed in (no Codex credentials found)")
+    await consumeCodexReset(auth, creditId, signal, this.fetcher)
+    this.cache = undefined
+    this.inflight = undefined
+    return this.limits(true, signal)
+  }
+
   private async check(signal: AbortSignal): Promise<LimitsResult> {
     const run = async (id: LimitProvider["id"], label: string, fn: () => Promise<LimitProvider>): Promise<LimitProvider> => {
       try {
@@ -234,14 +433,17 @@ export class Limits {
         return failed(id, label, error instanceof Error ? error.message : String(error))
       }
     }
-    const [claudeCreds, codex] = await Promise.all([claudeCredentials(), codexAuth()])
+    const [claudeCreds, codex, go] = await Promise.all([claudeCredentials(), codexAuth(), goCredentials(this.read)])
     const providers = await Promise.all([
       claudeCreds
-        ? run("claude", "Claude Code", () => fetchClaude(claudeCreds, signal))
+        ? run("claude", "Claude Code", () => fetchClaude(claudeCreds, signal, this.fetcher))
         : failed("claude", "Claude Code", "not signed in (no Claude credentials found)"),
       codex
-        ? run("codex", "Codex", () => fetchCodex(codex, signal))
+        ? run("codex", "Codex", () => fetchCodex(codex, signal, this.fetcher))
         : failed("codex", "Codex", "not signed in (no Codex credentials found)"),
+      go
+        ? run("opencode", "OpenCode Go", () => fetchGo(go, signal, this.fetcher))
+        : failed("opencode", "OpenCode Go", "not signed in (no OpenCode credentials found)"),
     ])
     const result: LimitsResult = { checkedAt: Date.now(), providers }
     this.cache = { at: Date.now(), result }

@@ -82,6 +82,52 @@ const sessionRanges = {
   },
 } as const
 
+const limitsResult = {
+  type: "object",
+  properties: {
+    checkedAt: num,
+    providers: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          id: { type: "string", enum: ["claude", "codex", "opencode"] },
+          label: str,
+          account: str,
+          error: str,
+          resetCredits: num,
+          manageUrl: str,
+          resets: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: { id: str, title: str, status: str, grantedAt: num, expiresAt: num },
+              required: ["id", "status"],
+            },
+          },
+          windows: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                id: str,
+                label: str,
+                kind: { type: "string", enum: ["session", "weekly", "monthly", "other"] },
+                usedPercent: num,
+                resetsAt: num,
+                windowDurationMins: num,
+              },
+              required: ["id", "label", "kind", "usedPercent"],
+            },
+          },
+        },
+        required: ["id", "label", "windows"],
+      },
+    },
+  },
+  required: ["checkedAt", "providers"],
+} as const
+
 export const UsageView = Rpc.define({
   id: "usage-view",
   methods: {
@@ -187,42 +233,16 @@ export const UsageView = Rpc.define({
         type: "object",
         properties: { refresh: { type: "boolean" } },
       },
-      output: {
+      output: limitsResult,
+      errors,
+    },
+    redeemReset: {
+      input: {
         type: "object",
-        properties: {
-          checkedAt: num,
-          providers: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                id: { type: "string", enum: ["claude", "codex"] },
-                label: str,
-                account: str,
-                error: str,
-                resetCredits: num,
-                windows: {
-                  type: "array",
-                  items: {
-                    type: "object",
-                    properties: {
-                      id: str,
-                      label: str,
-                      kind: { type: "string", enum: ["session", "weekly", "monthly", "other"] },
-                      usedPercent: num,
-                      resetsAt: num,
-                      windowDurationMins: num,
-                    },
-                    required: ["id", "label", "kind", "usedPercent"],
-                  },
-                },
-              },
-              required: ["id", "label", "windows"],
-            },
-          },
-        },
-        required: ["checkedAt", "providers"],
+        properties: { provider: { type: "string", enum: ["codex"] }, creditId: str },
+        required: ["provider", "creditId"],
       },
+      output: limitsResult,
       errors,
     },
   },

@@ -657,6 +657,24 @@
   align-items: center;
   gap: 8px;
 }
+.uv-resets {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--uv-border);
+}
+.uv-reset-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.uv-reset-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
 .uv-limit-window {
   display: flex;
   flex-direction: column;

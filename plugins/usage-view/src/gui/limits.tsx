@@ -1,8 +1,8 @@
 import type { Context } from "@opencode/plugin/gui"
 import { createLatest } from "@opencode/plugin/gui"
 import { createSignal, For, Show } from "solid-js"
-import type { LimitProvider } from "../types"
-import { errorMessage, loadLimits } from "./api"
+import type { LimitProvider, LimitReset, LimitsResult } from "../types"
+import { errorMessage, loadLimits, redeemReset } from "./api"
 import { ago, percent, until } from "./format"
 
 export function LimitsView(props: { ctx: Context; directory: () => string | undefined }) {
@@ -21,9 +21,33 @@ export function LimitsView(props: { ctx: Context; directory: () => string | unde
     },
   )
 
-  const data = () => limits.latest
+  /** The result a redeem returned; it shows until the next load. */
+  const [redeemed, setRedeemed] = createSignal<LimitsResult>()
+  const [busy, setBusy] = createSignal(false)
+  const data = () => redeemed() ?? limits.latest
+
+  const redeem = async (provider: LimitProvider, reset: LimitReset) => {
+    if (busy()) return
+    const ok = await props.ctx.dialogs.confirm({
+      title: `Use this ${provider.label} reset now?`,
+      description: "It refreshes your 5-hour and weekly Codex limits and can't be undone.",
+      confirm: "Use reset",
+      danger: true,
+    })
+    if (!ok) return
+    setBusy(true)
+    try {
+      setRedeemed(await redeemReset(props.ctx, { provider: "codex", creditId: reset.id, directory: props.directory() }))
+      props.ctx.toast.show({ title: "Codex reset used", description: "Your 5-hour and weekly limits were refreshed.", variant: "success" })
+    } catch (error) {
+      props.ctx.toast.show({ title: "Could not use the reset", description: errorMessage(error), variant: "error" })
+    } finally {
+      setBusy(false)
+    }
+  }
   const refresh = () => {
     force = true
+    setRedeemed(undefined)
     setVersion((v) => v + 1)
   }
 
@@ -65,10 +89,10 @@ export function LimitsView(props: { ctx: Context; directory: () => string | unde
                 </ui.Tooltip>
               </div>
               <For each={d().providers}>
-                {(provider) => <ProviderCard provider={provider} />}
+                {(provider) => <ProviderCard ctx={props.ctx} provider={provider} busy={busy()} onRedeem={(reset) => redeem(provider, reset)} />}
               </For>
               <div class="uv-footnote">
-                Limits are reported by the providers themselves (Claude Code and Codex), not estimated from local sessions. API-key
+                Limits are reported by the providers themselves (Claude Code, Codex and OpenCode Go), not estimated from local sessions. API-key
                 accounts have no subscription limits.
               </div>
             </section>
@@ -79,7 +103,9 @@ export function LimitsView(props: { ctx: Context; directory: () => string | unde
   )
 }
 
-function ProviderCard(props: { provider: LimitProvider }) {
+function ProviderCard(props: { ctx: Context; provider: LimitProvider; busy: boolean; onRedeem: (reset: LimitReset) => void }) {
+  const ui = props.ctx.ui
+  const resets = () => props.provider.resets ?? []
   return (
     <div class="uv-limit-provider">
       <div class="uv-limit-head">
@@ -87,11 +113,19 @@ function ProviderCard(props: { provider: LimitProvider }) {
         <Show when={props.provider.account}>
           {(account) => <span class="uv-pill">{account()}</span>}
         </Show>
-        <Show when={props.provider.resetCredits}>
+        <Show when={resets().length === 0 ? props.provider.resetCredits : undefined}>
           {(credits) => (
             <span class="uv-pill" title="Banked rate-limit reset credits reported by Codex">
               {credits()} reset {credits() === 1 ? "credit" : "credits"}
             </span>
+          )}
+        </Show>
+        <span class="uv-spacer" />
+        <Show when={props.provider.manageUrl}>
+          {(url) => (
+            <ui.Button size="small" variant="ghost" onClick={() => props.ctx.system.openExternal(url())}>
+              {MANAGE_LABELS[props.provider.id]}
+            </ui.Button>
           )}
         </Show>
       </div>
@@ -141,6 +175,35 @@ function ProviderCard(props: { provider: LimitProvider }) {
           }}
         </For>
       </Show>
+      <Show when={resets().length > 0}>
+        <div class="uv-resets">
+          <div class="uv-muted uv-small">Banked resets</div>
+          <For each={resets()}>
+            {(reset) => (
+              <div class="uv-reset-row">
+                <div class="uv-reset-info">
+                  <span class="uv-ellipsis">{reset.title ?? "Limit reset"}</span>
+                  <span class="uv-muted uv-small">
+                    {reset.status !== "available" ? `${reset.status} · ` : ""}
+                    {reset.expiresAt ? `expires ${until(reset.expiresAt)} (${new Date(reset.expiresAt).toLocaleDateString()})` : "no expiry reported"}
+                  </span>
+                </div>
+                <Show when={reset.status === "available" && props.provider.id === "codex"}>
+                  <ui.Button size="small" variant="neutral" disabled={props.busy} onClick={() => props.onRedeem(reset)}>
+                    Use reset
+                  </ui.Button>
+                </Show>
+              </div>
+            )}
+          </For>
+        </div>
+      </Show>
     </div>
   )
+}
+
+const MANAGE_LABELS: Record<LimitProvider["id"], string> = {
+  claude: "Manage on claude.ai",
+  codex: "Manage on ChatGPT",
+  opencode: "Open Console",
 }

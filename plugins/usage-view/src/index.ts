@@ -20,8 +20,6 @@ export default Plugin.define({
       fetch,
       parseAliases(ctx.options.aliases),
     )
-    const limits = new Limits()
-
     const path = typeof ctx.options.database === "string" ? ctx.options.database : defaultDatabasePath(ctx.app.channel)
     const ledgers = (registry[SHARED] ??= new Map())
     let shared = ledgers.get(path)
@@ -43,6 +41,7 @@ export default Plugin.define({
     }
     shared.refs++
     const ledger = shared.ledger
+    const limits = new Limits((fn) => ledger.read(fn))
 
     const handle =
       <I>(fn: (input: I, signal: AbortSignal) => Promise<unknown>) =>
@@ -87,6 +86,9 @@ export default Plugin.define({
         }),
       ),
       limits: handle<{ refresh?: boolean }>((i, signal) => limits.limits(i?.refresh === true, signal)),
+      redeemReset: handle<{ provider?: string; creditId?: string }>((i, signal) =>
+        limits.redeemReset(String(i?.provider), String(i?.creditId ?? ""), signal),
+      ),
     })
 
     const mine = shared
