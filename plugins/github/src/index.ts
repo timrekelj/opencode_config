@@ -1,10 +1,8 @@
 import { Plugin } from "@opencode/plugin"
 import { autoReview } from "./auto-review"
-import { GitHub } from "./gh"
 import * as git from "./git"
-import { GitError } from "./git"
-import { Git, PrReview } from "./rpc"
-import type { GraphScope, ListState } from "./types"
+import { Git } from "./rpc"
+import type { GraphScope } from "./types"
 
 interface Base {
   directory: string
@@ -13,38 +11,17 @@ interface Base {
 export default Plugin.define({
   id: "github",
   async setup(ctx) {
-    const github = new GitHub(typeof ctx.options.gh === "string" ? ctx.options.gh : "gh")
-
     const handle =
       <I, O>(fn: (input: I & Base, signal: AbortSignal) => Promise<O>) =>
       async (input: unknown, context: { signal: AbortSignal; error: (...args: any[]) => any }) => {
         try {
-          // RPC outputs must be plain JSON: drop `undefined` fields (e.g. optional check URLs).
+          // RPC outputs must be plain JSON: drop `undefined` fields (e.g. a missing remote URL).
           return JSON.parse(JSON.stringify((await fn(input as I & Base, context.signal)) ?? null))
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
-          return context.error(error instanceof GitError ? "git_failed" : "gh_failed", message, { message })
+          return context.error("git_failed", message, { message })
         }
       }
-
-    await ctx.rpc.register(PrReview, {
-      repo: handle((i) => github.repo(i.directory)),
-      list: handle<{ state?: ListState }, unknown>((i, signal) => github.list(i.directory, i.state ?? "open", signal)),
-      detail: handle<{ number: number }, unknown>((i, signal) => github.detail(i.directory, i.number, signal)),
-      files: handle<{ number: number }, unknown>((i, signal) => github.files(i.directory, i.number, signal)),
-      current: handle((i, signal) => github.current(i.directory, signal)),
-      setViewed: handle<{ number: number; path: string; viewed: boolean }, void>((i) =>
-        github.setViewed(i.directory, i.number, i.path, i.viewed),
-      ),
-      comment: handle<{ number: number; body: string }, void>((i) => github.comment(i.directory, i.number, i.body)),
-      reply: handle<{ number: number; commentID: number; body: string }, void>((i) =>
-        github.reply(i.directory, i.number, i.commentID, i.body),
-      ),
-      submitReview: handle<Parameters<GitHub["submitReview"]>[1], void>((i) => github.submitReview(i.directory, i)),
-      merge: handle<{ number: number; method: string }, void>((i) => github.merge(i.directory, i.number, i.method)),
-      checkout: handle<{ number: number }, void>((i) => github.checkout(i.directory, i.number)),
-      ready: handle<{ number: number }, void>((i) => github.ready(i.directory, i.number)),
-    } as any)
 
     const optionLimit = Number(ctx.options.limit)
     const limit = Number.isFinite(optionLimit) && optionLimit > 0 ? optionLimit : 300

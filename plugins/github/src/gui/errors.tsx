@@ -13,22 +13,6 @@ export function showErrorToast(ctx: Context, action: string, error: unknown, dir
   })
 }
 
-/** A slim notice for a failed refresh while older data is still shown. */
-export function StaleBanner(props: { ctx: Context; error: unknown; directory?: string; onRetry: () => void }) {
-  const ui = props.ctx.ui
-  const info = () => describeError(props.error, props.directory)
-  return (
-    <div class="prr-stale" role="status" title={info().raw}>
-      <ui.Icon name={info().icon} size="small" />
-      <span class="prr-ellipsis">Couldn't refresh: {info().title}. Showing the last loaded data.</span>
-      <span class="prr-spacer" />
-      <ui.Button size="small" variant="ghost" onClick={props.onRetry}>
-        Retry
-      </ui.Button>
-    </div>
-  )
-}
-
 export function ErrorState(props: {
   ctx: Context
   error: unknown
@@ -73,17 +57,6 @@ export function ErrorState(props: {
           <ui.Button size="small" variant="contrast" icon="refresh" busy={props.retrying} onClick={() => props.onRetry?.()}>
             Retry
           </ui.Button>
-        </Show>
-        <Show when={info().link}>
-          {(link) => (
-            <ui.Button
-              size="small"
-              icon="square-arrow-top-right"
-              onClick={() => props.ctx.system.openExternal(link().url)}
-            >
-              {link().label}
-            </ui.Button>
-          )}
         </Show>
         <ui.Button size="small" variant="ghost-muted" onClick={() => setDetails(!details())}>
           {details() ? "Hide details" : "Details"}

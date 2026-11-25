@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process"
 
-/** A failed spawn or non-zero exit; gh.ts and git.ts rewrap it as GhError / GitError. */
+/** A failed spawn or non-zero exit; git.ts rewraps it as GitError. */
 export class RunError extends Error {
   constructor(
     message: string,
@@ -28,7 +28,7 @@ export function run(bin: string, args: string[], options: RunOptions): Promise<s
         ...process.env,
         PATH: path,
         NO_COLOR: "1",
-        // Network commands (fetch, pull, push, gh pr checkout) must fail instead of hanging on a credential prompt.
+        // Network commands (fetch, pull, push) must fail instead of hanging on a credential prompt.
         GIT_TERMINAL_PROMPT: "0",
         ...options.env,
       },

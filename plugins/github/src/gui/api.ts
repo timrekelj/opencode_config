@@ -1,22 +1,6 @@
 import type { Context } from "@opencode/plugin/gui"
-import { Git, PrReview } from "../rpc"
-import type {
-  BranchInfo,
-  CurrentPr,
-  DraftComment,
-  Graph,
-  GraphScope,
-  ListState,
-  MergeMethod,
-  PrDetail,
-  PrFiles,
-  PrSummary,
-  RepoInfo,
-  RepoStatus,
-  ReviewEvent,
-} from "../types"
-
-export type Api = ReturnType<typeof makeApi>
+import { Git } from "../rpc"
+import type { BranchInfo, Graph, GraphScope, RepoStatus } from "../types"
 
 /**
  * One RPC caller per plugin context; reads ctx.client on every call, as it changes after the server restarts.
@@ -26,40 +10,6 @@ function makeCaller(ctx: Pick<Context, "client">) {
   return <T>(rpc: any, method: string, directory: string, input: object = {}, signal?: AbortSignal) => {
     const client = ctx.client.rpc(rpc) as unknown as Record<string, (input: object, options: object) => Promise<T>>
     return client[method]({ directory, ...input }, { location: { directory }, signal })
-  }
-}
-
-export function makeApi(ctx: Pick<Context, "client">) {
-  const call = makeCaller(ctx)
-  const pr = <T>(method: keyof (typeof PrReview)["methods"], directory: string, input: object = {}, signal?: AbortSignal) =>
-    call<T>(PrReview, method, directory, input, signal)
-
-  return {
-    repo: (dir: string, signal?: AbortSignal) => pr<RepoInfo>("repo", dir, {}, signal),
-    list: (dir: string, state: ListState, signal?: AbortSignal) => pr<PrSummary[]>("list", dir, { state }, signal),
-    detail: (dir: string, number: number, signal?: AbortSignal) => pr<PrDetail>("detail", dir, { number }, signal),
-    files: (dir: string, number: number, signal?: AbortSignal) => pr<PrFiles>("files", dir, { number }, signal),
-    current: (dir: string) => pr<CurrentPr | null>("current", dir),
-    setViewed: (dir: string, number: number, path: string, viewed: boolean) =>
-      pr<null>("setViewed", dir, { number, path, viewed }),
-    comment: (dir: string, number: number, body: string) => pr<null>("comment", dir, { number, body }),
-    reply: (dir: string, number: number, commentID: number, body: string) =>
-      pr<null>("reply", dir, { number, commentID, body }),
-    submitReview: (
-      dir: string,
-      number: number,
-      input: { event: ReviewEvent; body: string; commit: string; comments: DraftComment[] },
-    ) =>
-      pr<null>("submitReview", dir, {
-        number,
-        event: input.event,
-        body: input.body,
-        commit: input.commit,
-        comments: input.comments.map(({ path, line, startLine, side, body }) => ({ path, line, startLine, side, body })),
-      }),
-    merge: (dir: string, number: number, method: MergeMethod) => pr<null>("merge", dir, { number, method }),
-    checkout: (dir: string, number: number) => pr<null>("checkout", dir, { number }),
-    ready: (dir: string, number: number) => pr<null>("ready", dir, { number }),
   }
 }
 
