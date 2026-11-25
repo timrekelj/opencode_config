@@ -47,6 +47,8 @@ Without a `clientId` the plugin logs one warning and does nothing.
 | `idleTimeout`      | number  | `15`       | Minutes of idle with no events before the presence is cleared.                       |
 | `maxDetailsLength` | integer | `32`       | Max length of the project line (Discord's profile card truncates around 32; cap 128). |
 | `showSpend`        | boolean | `true`     | Show today's estimated spend on the large image hover (needs the usage-view plugin). |
+| `debugLog`         | boolean | `true`     | Append a JSON line per presence transition (connected, disconnected, shown, cleared, closed). |
+| `debugLogPath`     | string  | `~/.local/share/opencode/log/discord-presence.log` | Where the transition log is written. |
 
 ## Behaviour
 

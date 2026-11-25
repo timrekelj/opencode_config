@@ -2,6 +2,7 @@ import { Plugin } from "@opencode/plugin"
 import { DiscordIpc } from "./ipc"
 import { createSpendRefresher } from "./refresher"
 import { Presence, type ModelRef, type PresenceEvent } from "./presence"
+import { createTrace, defaultTracePath, type TraceKind } from "./trace"
 
 type Context = Parameters<typeof Plugin.define>[0] extends { setup: (ctx: infer C) => any } ? C : never
 
@@ -40,6 +41,7 @@ function create(
   idleTimeoutMs: number,
   maxDetailsLength: number,
   showSpend: boolean,
+  trace?: (kind: TraceKind, reason?: string) => void,
 ): Shared {
   const names = new Map<string, string>()
   const presence = new Presence({
@@ -48,14 +50,16 @@ function create(
     maxDetailsLength,
     modelName: (model) => names.get(`${model.providerID}/${model.id}`) ?? names.get(`/${model.id}`),
   })
-  const ipc = new DiscordIpc({ clientId, log })
+  const ipc = new DiscordIpc({ clientId, log, trace })
   const shared: Shared = { key: clientId, ipc, presence, contexts: [], names, refs: 0, stop() {}, restart() {} }
   let expiry: ReturnType<typeof setTimeout> | undefined
   let controller: AbortController | undefined
 
   const publish = () => {
     clearTimeout(expiry)
-    ipc.setActivity(presence.activity(Date.now()))
+    const activity = presence.activity(Date.now())
+    // A null activity with an expiry still pending means the idle timeout passed; without one, no sessions are left.
+    ipc.setActivity(activity, activity ? undefined : presence.expiresAt() === undefined ? "no-sessions" : "idle")
     const at = presence.expiresAt()
     if (at !== undefined) expiry = setTimeout(publish, Math.max(0, at - Date.now()) + 50)
   }
@@ -176,7 +180,10 @@ export default Plugin.define({
       shared.stop()
       shared = undefined
     }
-    if (!shared) shared = registry[SHARED] = create(clientId, largeImage, idleMs, maxDetailsLength, showSpend)
+    const debugPath =
+      typeof ctx.options.debugLogPath === "string" && ctx.options.debugLogPath ? ctx.options.debugLogPath : defaultTracePath()
+    const trace = ctx.options.debugLog === false ? undefined : createTrace(debugPath)
+    if (!shared) shared = registry[SHARED] = create(clientId, largeImage, idleMs, maxDetailsLength, showSpend, trace)
     const mine = shared
     mine.refs++
     mine.contexts.push(ctx)

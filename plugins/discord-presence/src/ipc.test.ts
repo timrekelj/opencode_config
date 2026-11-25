@@ -87,6 +87,72 @@ describe("socketPaths", () => {
   })
 })
 
+describe("DiscordIpc trace", () => {
+  const traced = (path: string, events: [string, string | undefined][]) => {
+    const ipc = new DiscordIpc({
+      clientId: "123",
+      paths: () => [path],
+      retryMinMs: 30,
+      retryMaxMs: 60,
+      throttleMs: 20,
+      trace: (kind, reason) => events.push([kind, reason]),
+    })
+    cleanups.push(() => void ipc.close())
+    return ipc
+  }
+
+  test("logs connected, shown and cleared once per transition, not per update", async () => {
+    const server = await fake(setup())
+    cleanups.push(server.close)
+    const events: [string, string | undefined][] = []
+    const ipc = traced(server.path, events)
+    ipc.setActivity(activity("Working"))
+    ipc.start()
+    await until(() => server.frames.some((f) => f.op === 1))
+    ipc.setActivity(activity("Idle"))
+    await until(() => server.frames.filter((f) => f.op === 1).length === 2)
+    ipc.setActivity(null, "idle")
+    await until(() => server.frames.filter((f) => f.op === 1).length === 3)
+    ipc.setActivity(null, "no-sessions")
+    await new Promise((r) => setTimeout(r, 100))
+    expect(events).toEqual([
+      ["connected", undefined],
+      ["shown", undefined],
+      ["cleared", "idle"],
+    ])
+  })
+
+  test("logs disconnected, then connected and shown again after a reconnect", async () => {
+    const d = setup()
+    const first = await fake(d)
+    const events: [string, string | undefined][] = []
+    const ipc = traced(first.path, events)
+    ipc.setActivity(activity("Working"))
+    ipc.start()
+    await until(() => first.frames.some((f) => f.op === 1))
+    first.close()
+    await new Promise((r) => setTimeout(r, 50))
+    rmSync(first.path, { force: true })
+    const second = await fake(d)
+    cleanups.push(second.close)
+    await until(() => second.frames.some((f) => f.op === 1))
+    expect(events.map((e) => e[0])).toEqual(["connected", "shown", "disconnected", "connected", "shown"])
+  })
+
+  test("close logs closed and cleared with reason close, without a disconnect", async () => {
+    const server = await fake(setup())
+    cleanups.push(server.close)
+    const events: [string, string | undefined][] = []
+    const ipc = traced(server.path, events)
+    ipc.setActivity(activity("Working"))
+    ipc.start()
+    await until(() => server.frames.some((f) => f.op === 1))
+    await ipc.close()
+    await new Promise((r) => setTimeout(r, 50))
+    expect(events.map((e) => e.join(":"))).toEqual(["connected:", "shown:", "closed:", "cleared:close"])
+  })
+})
+
 describe("DiscordIpc", () => {
   test("handshake, READY, SET_ACTIVITY shape, dedupe, clear", async () => {
     const server = await fake(setup())

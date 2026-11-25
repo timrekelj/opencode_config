@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto"
 import { existsSync } from "node:fs"
 import net from "node:net"
 import type { Activity } from "./presence"
+import type { TraceKind } from "./trace"
 
 const HANDSHAKE = 0
 const FRAME = 1
@@ -57,6 +58,8 @@ export type IpcOptions = {
   retryMaxMs?: number
   /** Minimum gap between SET_ACTIVITY sends. */
   throttleMs?: number
+  /** Called on real presence transitions only (connected, disconnected, shown, cleared, closed). Must not throw. */
+  trace?: (kind: TraceKind, reason?: string) => void
 }
 
 export class DiscordIpc {
@@ -71,6 +74,9 @@ export class DiscordIpc {
   private delay: number
   private warned = false
   private everWanted = false
+  private wantedReason: string | undefined
+  /** Whether a non-null activity is currently shown on this connection. */
+  private visible = false
 
   constructor(private options: IpcOptions) {
     this.delay = options.retryMinMs ?? 15_000
@@ -82,8 +88,9 @@ export class DiscordIpc {
   }
 
   /** Sets the activity to show; null clears it. Sends are coalesced and deduplicated. */
-  setActivity(activity: Activity | null) {
+  setActivity(activity: Activity | null, reason?: string) {
     this.wanted = activity
+    this.wantedReason = reason
     this.everWanted = true
     this.schedule()
   }
@@ -92,11 +99,14 @@ export class DiscordIpc {
     this.closed = true
     clearTimeout(this.retry)
     clearTimeout(this.flushTimer)
+    this.trace("closed")
     const socket = this.socket
     if (!socket) return
     // Clear the presence right away so it does not linger after the process exits.
     if (this.ready && this.sent !== "null" && !socket.destroyed) {
       this.write(socket, FRAME, this.command(null))
+      if (this.visible) this.trace("cleared", "close")
+      this.visible = false
     }
     this.socket = undefined
     this.ready = false
@@ -135,8 +145,10 @@ export class DiscordIpc {
       this.socket = undefined
       this.ready = false
       this.sent = undefined
+      this.visible = false
       if (this.closed) return
       if (!opened) return this.tryPaths(paths)
+      this.trace("disconnected")
       this.failed("disconnected")
     })
   }
@@ -151,6 +163,8 @@ export class DiscordIpc {
       this.warned = false
       this.sent = undefined
       this.lastSend = 0
+      this.visible = false
+      this.trace("connected")
       if (this.everWanted) this.schedule()
     } else if (frame.data?.evt === "ERROR") {
       this.options.log?.(`discord rejected the request: ${frame.data?.data?.message ?? "unknown error"}`)
@@ -188,6 +202,19 @@ export class DiscordIpc {
     this.sent = key
     this.lastSend = Date.now()
     this.write(socket, FRAME, this.command(this.wanted))
+    if (this.wanted && !this.visible) {
+      this.visible = true
+      this.trace("shown")
+    } else if (!this.wanted && this.visible) {
+      this.visible = false
+      this.trace("cleared", this.wantedReason ?? "unknown")
+    }
+  }
+
+  private trace(kind: TraceKind, reason?: string) {
+    try {
+      this.options.trace?.(kind, reason)
+    } catch {}
   }
 
   private command(activity: Activity | null) {
